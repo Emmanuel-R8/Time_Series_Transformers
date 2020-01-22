@@ -658,6 +658,7 @@ class MemTransformerLM(nn.Module):
         else:
             dec_attn_mask = torch.triu(
                 word_emb.new_ones(qlen, klen), diagonal=1+mlen).byte()[:,:,None]
+        dec_attn_mask = dec_attn_mask.bool()  # Convert to bool
 
         hids = []
         if self.attn_type == 0: # default
@@ -751,7 +752,7 @@ class MemTransformerLM(nn.Module):
                 self.out_layer.bias, target, pred_hid, self.sampler)
             loss = -F.log_softmax(logit, -1)[:, :, 0]
         else:
-            loss = self.crit(pred_hid.reshape(-1, pred_hid.size(-1)), target.view(-1))
+            loss = self.crit(pred_hid.reshape(-1, pred_hid.size(-1)), target.reshape(-1))
             loss = loss.view(tgt_len, -1)
 
         if new_mems is None:
