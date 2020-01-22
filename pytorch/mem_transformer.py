@@ -826,7 +826,7 @@ class MemTransformerLM(nn.Module):
                                   self.out_layer.bias, target, pred_hid, self.sampler)
             loss = -F.log_softmax(logit, -1)[:, :, 0]
         else:
-            loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.reshape(-1))
+            loss = self.crit(pred_hid.reshape(-1, pred_hid.size(-1)), target.view(-1))
             loss = loss.view(tgt_len, -1)
 
         if new_mems is None:
