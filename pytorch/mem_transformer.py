@@ -468,7 +468,7 @@ class AdaptiveEmbedding(nn.Module):
                 embed  = F.linear(embed, self.emb_projs[0])
         else:
             param = next(self.parameters())
-            inp_flat = inp.view(-1)
+            inp_flat = inp.reshape(-1)
             emb_flat = torch.zeros([inp_flat.size(0), self.d_proj], 
                 dtype=param.dtype, device=param.device)
             for i in range(len(self.cutoffs)):
