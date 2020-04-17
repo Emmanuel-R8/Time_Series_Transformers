@@ -7,7 +7,7 @@ if [[ $1 == 'train' ]]; then
         --data ../data/wikitext-103/ \
         --dataset wt103 \
         --adaptive \
-        --n_layer 16 \
+        --n_layer 4 \
         --d_model 410 \
         --n_head 10 \
         --d_head 41 \
@@ -22,8 +22,7 @@ if [[ $1 == 'train' ]]; then
         --mem_len 150 \
         --eval_tgt_len 150 \
         --batch_size 60 \
-        --multi_gpu \
-        --gpu0_bsz 4 \
+        --batch_chunk 10
         ${@:2}
 elif [[ $1 == 'eval' ]]; then
     echo 'Run evaluation...'

@@ -163,6 +163,7 @@ if torch.cuda.is_available():
         print('WARNING: You have a CUDA device, so you should probably run with --cuda')
     else:
         torch.cuda.manual_seed_all(args.seed)
+print(torch.rand(1))
 
 # Validate `--fp16` option
 if args.fp16:
@@ -219,19 +220,23 @@ def init_bias(bias):
 def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Linear') != -1:
+        print("init Linear")
         if hasattr(m, 'weight') and m.weight is not None:
             init_weight(m.weight)
         if hasattr(m, 'bias') and m.bias is not None:
             init_bias(m.bias)
     elif classname.find('AdaptiveEmbedding') != -1:
+        print("init AdaptiveEmbedding")
         if hasattr(m, 'emb_projs'):
             for i in range(len(m.emb_projs)):
                 if m.emb_projs[i] is not None:
                     nn.init.normal_(m.emb_projs[i], 0.0, args.proj_init_std)
     elif classname.find('Embedding') != -1:
+        print("init Embedding")
         if hasattr(m, 'weight'):
             init_weight(m.weight)
     elif classname.find('ProjectedAdaptiveLogSoftmax') != -1:
+        print("init ProjectedAdaptiveLogSoftmax")
         if hasattr(m, 'cluster_weight') and m.cluster_weight is not None:
             init_weight(m.cluster_weight)
         if hasattr(m, 'cluster_bias') and m.cluster_bias is not None:
@@ -241,18 +246,23 @@ def weights_init(m):
                 if m.out_projs[i] is not None:
                     nn.init.normal_(m.out_projs[i], 0.0, args.proj_init_std)
     elif classname.find('LayerNorm') != -1:
+        print("init LayerNorm")
         if hasattr(m, 'weight'):
             nn.init.normal_(m.weight, 1.0, args.init_std)
         if hasattr(m, 'bias') and m.bias is not None:
             init_bias(m.bias)
-    elif classname.find('TransformerLM') != -1:
+    else:
         if hasattr(m, 'r_emb'):
+            print("init r_emb")
             init_weight(m.r_emb)
         if hasattr(m, 'r_w_bias'):
+            print("init r_w_bias")
             init_weight(m.r_w_bias)
         if hasattr(m, 'r_r_bias'):
+            print("init r_r_bias")
             init_weight(m.r_r_bias)
         if hasattr(m, 'r_bias'):
+            print("init r_bias")
             init_bias(m.r_bias)
 
 def update_dropout(m):
@@ -273,6 +283,7 @@ if args.restart:
     model.apply(update_dropout)
     model.apply(update_dropatt)
 else:
+    print(torch.rand(1))
     model = MemTransformerLM(ntokens, args.n_layer, args.n_head, args.d_model,
         args.d_head, args.d_inner, args.dropout, args.dropatt,
         tie_weight=args.tied, d_embed=args.d_embed, div_val=args.div_val,
@@ -280,8 +291,9 @@ else:
         ext_len=args.ext_len, mem_len=args.mem_len, cutoffs=cutoffs,
         same_length=args.same_length, attn_type=args.attn_type,
         clamp_len=args.clamp_len, sample_softmax=args.sample_softmax)
+    print(torch.rand(1))
     model.apply(weights_init)
-    model.word_emb.apply(weights_init) # ensure embedding init is not overridden by out_layer in case of weight sharing
+    # model.word_emb.apply(weights_init) # ensure embedding init is not overridden by out_layer in case of weight sharing
 args.n_all_param = sum([p.nelement() for p in model.parameters()])
 args.n_nonemb_param = sum([p.nelement() for p in model.layers.parameters()])
 
@@ -442,6 +454,8 @@ def train():
                     loss.backward()
                 train_loss += loss.float().item()
         else:
+            # debug
+            # ret = para_model(data, target)
             ret = para_model(data, target, *mems)
             loss, mems = ret[0], ret[1:]
             loss = loss.float().mean().type_as(loss)
@@ -466,7 +480,7 @@ def train():
             # linear warmup stage
             if train_step < args.warmup_step:
                 curr_lr = args.lr * train_step / args.warmup_step
-                optimizer.param_groups[0]['lr'] = curr_lr
+                optimizer.param_groups = curr_lr
                 if args.sample_softmax > 0:
                     optimizer_sparse.param_groups[0]['lr'] = curr_lr * 2
             else:

@@ -91,7 +91,7 @@ def sample_logits(embedding, bias, labels, inputs, sampler):
 #         self.unique = unique
 
 #         if self.unique:
-#             self.exclude_mask = torch.ByteTensor(range_max).fill_(0)
+#             self.exclude_mask = torch.BoolTensor(range_max).fill_(0)
 
 #     def sample(self, n_sample, labels):
 #         pos_sample, new_labels = labels.unique(return_inverse=True)
