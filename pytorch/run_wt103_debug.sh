@@ -21,6 +21,8 @@ if [[ $1 == 'train' ]]; then
         --tgt_len 150 \
         --mem_len 150 \
         --eval_tgt_len 150 \
+        --multi_gpu \
+        --gpu0_bsz 4 \
         --batch_size 60 \
         --batch_chunk 1 \
         --wandb
