@@ -116,7 +116,7 @@ parser.add_argument('--same_length', action='store_true',
                     help='use the same attn length for all tokens')
 parser.add_argument('--attn_type', type=int, default=0,
                     help='attention type. 0 for ours, 1 for Shaw et al,'
-                    '2 for Vaswani et al, 3 for Al Rfou et al.')
+                         '2 for Vaswani et al, 3 for Al Rfou et al.')
 parser.add_argument('--clamp_len', type=int, default=-1,
                     help='use the same pos embeddings after clamp_len')
 parser.add_argument('--eta_min', type=float, default=0.0,
@@ -137,12 +137,29 @@ parser.add_argument('--fp16', action='store_true',
                     help='Run in pseudo-fp16 mode (fp16 storage fp32 math).')
 parser.add_argument('--static-loss-scale', type=float, default=1,
                     help='Static loss scale, positive power of 2 values can '
-                    'improve fp16 convergence.')
+                         'improve fp16 convergence.')
 parser.add_argument('--dynamic-loss-scale', action='store_true',
                     help='Use dynamic loss scaling.  If supplied, this argument'
-                    ' supersedes --static-loss-scale.')
+                         ' supersedes --static-loss-scale.')
+parser.add_argument('--wandb', action='store_true',
+                    help='Use weights and biases logging.')
 args = parser.parse_args()
 args.tied = not args.not_tied
+
+if args.wandb:
+    import wandb
+    logged_params = {"dataset": args.dataset,
+                     "sequence_length": args.tgt_len,
+                     "memory_length": args.mem_len,
+                     "n_embd": args.d_model,
+                     "d_inner": args.d_inner,
+                     "n_layer": args.n_layer,
+                     "n_head": args.n_head,
+                     "dropout": args.dropout,
+                     "div_val": args.div_val,
+                     "codebase": "CMU"
+                     }
+    wandb.init(project="salamander", config=logged_params)
 
 if args.d_embed < 0:
     args.d_embed = args.d_model
@@ -153,7 +170,7 @@ assert args.batch_size % args.batch_chunk == 0
 args.work_dir = '{}-{}'.format(args.work_dir, args.dataset)
 args.work_dir = os.path.join(args.work_dir, time.strftime('%Y%m%d-%H%M%S'))
 logging = create_exp_dir(args.work_dir,
-    scripts_to_save=['train.py', 'mem_transformer.py'], debug=args.debug)
+                         scripts_to_save=['train.py', 'mem_transformer.py'], debug=args.debug)
 
 # Set the random seed manually for reproducibility.
 np.random.seed(args.seed)
@@ -163,7 +180,6 @@ if torch.cuda.is_available():
         print('WARNING: You have a CUDA device, so you should probably run with --cuda')
     else:
         torch.cuda.manual_seed_all(args.seed)
-print(torch.rand(1))
 
 # Validate `--fp16` option
 if args.fp16:
@@ -188,11 +204,11 @@ args.n_token = ntokens
 
 eval_batch_size = 10
 tr_iter = corpus.get_iterator('train', args.batch_size, args.tgt_len,
-    device=device, ext_len=args.ext_len)
+                              device=device, ext_len=args.ext_len)
 va_iter = corpus.get_iterator('valid', eval_batch_size, args.eval_tgt_len,
-    device=device, ext_len=args.ext_len)
+                              device=device, ext_len=args.ext_len)
 te_iter = corpus.get_iterator('test', eval_batch_size, args.eval_tgt_len,
-    device=device, ext_len=args.ext_len)
+                              device=device, ext_len=args.ext_len)
 
 # adaptive softmax / embedding
 cutoffs, tie_projs = [], [False]
@@ -205,6 +221,7 @@ if args.adaptive:
         cutoffs = [60000, 100000, 640000]
         tie_projs += [False] * len(cutoffs)
 
+
 ###############################################################################
 # Build the model
 ###############################################################################
@@ -214,29 +231,27 @@ def init_weight(weight):
     elif args.init == 'normal':
         nn.init.normal_(weight, 0.0, args.init_std)
 
+
 def init_bias(bias):
     nn.init.constant_(bias, 0.0)
+
 
 def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Linear') != -1:
-        print("init Linear")
         if hasattr(m, 'weight') and m.weight is not None:
             init_weight(m.weight)
         if hasattr(m, 'bias') and m.bias is not None:
             init_bias(m.bias)
     elif classname.find('AdaptiveEmbedding') != -1:
-        print("init AdaptiveEmbedding")
         if hasattr(m, 'emb_projs'):
             for i in range(len(m.emb_projs)):
                 if m.emb_projs[i] is not None:
                     nn.init.normal_(m.emb_projs[i], 0.0, args.proj_init_std)
     elif classname.find('Embedding') != -1:
-        print("init Embedding")
         if hasattr(m, 'weight'):
             init_weight(m.weight)
     elif classname.find('ProjectedAdaptiveLogSoftmax') != -1:
-        print("init ProjectedAdaptiveLogSoftmax")
         if hasattr(m, 'cluster_weight') and m.cluster_weight is not None:
             init_weight(m.cluster_weight)
         if hasattr(m, 'cluster_bias') and m.cluster_bias is not None:
@@ -246,24 +261,20 @@ def weights_init(m):
                 if m.out_projs[i] is not None:
                     nn.init.normal_(m.out_projs[i], 0.0, args.proj_init_std)
     elif classname.find('LayerNorm') != -1:
-        print("init LayerNorm")
         if hasattr(m, 'weight'):
             nn.init.normal_(m.weight, 1.0, args.init_std)
         if hasattr(m, 'bias') and m.bias is not None:
             init_bias(m.bias)
     else:
         if hasattr(m, 'r_emb'):
-            print("init r_emb")
             init_weight(m.r_emb)
         if hasattr(m, 'r_w_bias'):
-            print("init r_w_bias")
             init_weight(m.r_w_bias)
         if hasattr(m, 'r_r_bias'):
-            print("init r_r_bias")
             init_weight(m.r_r_bias)
         if hasattr(m, 'r_bias'):
-            print("init r_bias")
             init_bias(m.r_bias)
+
 
 def update_dropout(m):
     classname = m.__class__.__name__
@@ -271,9 +282,11 @@ def update_dropout(m):
         if hasattr(m, 'p'):
             m.p = args.dropout
 
+
 def update_dropatt(m):
     if hasattr(m, 'dropatt'):
         m.dropatt.p = args.dropatt
+
 
 if args.restart:
     with open(os.path.join(args.restart_dir, 'model.pt'), 'rb') as f:
@@ -283,15 +296,13 @@ if args.restart:
     model.apply(update_dropout)
     model.apply(update_dropatt)
 else:
-    print(torch.rand(1))
     model = MemTransformerLM(ntokens, args.n_layer, args.n_head, args.d_model,
-        args.d_head, args.d_inner, args.dropout, args.dropatt,
-        tie_weight=args.tied, d_embed=args.d_embed, div_val=args.div_val,
-        tie_projs=tie_projs, pre_lnorm=args.pre_lnorm, tgt_len=args.tgt_len,
-        ext_len=args.ext_len, mem_len=args.mem_len, cutoffs=cutoffs,
-        same_length=args.same_length, attn_type=args.attn_type,
-        clamp_len=args.clamp_len, sample_softmax=args.sample_softmax)
-    print(torch.rand(1))
+                             args.d_head, args.d_inner, args.dropout, args.dropatt,
+                             tie_weight=args.tied, d_embed=args.d_embed, div_val=args.div_val,
+                             tie_projs=tie_projs, pre_lnorm=args.pre_lnorm, tgt_len=args.tgt_len,
+                             ext_len=args.ext_len, mem_len=args.mem_len, cutoffs=cutoffs,
+                             same_length=args.same_length, attn_type=args.attn_type,
+                             clamp_len=args.clamp_len, sample_softmax=args.sample_softmax)
     model.apply(weights_init)
     # model.word_emb.apply(weights_init) # ensure embedding init is not overridden by out_layer in case of weight sharing
 args.n_all_param = sum([p.nelement() for p in model.parameters()])
@@ -323,7 +334,7 @@ if args.optim.lower() == 'sgd':
         optimizer = optim.SGD(dense_params, lr=args.lr, momentum=args.mom)
     else:
         optimizer = optim.SGD(model.parameters(), lr=args.lr,
-            momentum=args.mom)
+                              momentum=args.mom)
 elif args.optim.lower() == 'adam':
     if args.sample_softmax > 0:
         dense_params, sparse_params = [], []
@@ -345,10 +356,11 @@ if args.scheduler == 'cosine':
     # because in previous versions eta_min is default to 0
     # rather than the default value of lr_min 1e-6
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,
-        args.max_step, eta_min=args.eta_min) # should use eta_min arg
+                                                     args.max_step, eta_min=args.eta_min)  # should use eta_min arg
     if args.sample_softmax > 0:
         scheduler_sparse = optim.lr_scheduler.CosineAnnealingLR(optimizer_sparse,
-            args.max_step, eta_min=args.eta_min) # should use eta_min arg
+                                                                args.max_step,
+                                                                eta_min=args.eta_min)  # should use eta_min arg
 elif args.scheduler == 'inv_sqrt':
     # originally used for Transformer (in Attention is all you need)
     def lr_lambda(step):
@@ -357,14 +369,17 @@ elif args.scheduler == 'inv_sqrt':
             return 1.
         else:
             return 1. / (step ** 0.5) if step > args.warmup_step \
-                   else step / (args.warmup_step ** 1.5)
+                else step / (args.warmup_step ** 1.5)
+
+
     scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 elif args.scheduler == 'dev_perf':
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-        factor=args.decay_rate, patience=args.patience, min_lr=args.lr_min)
+                                                     factor=args.decay_rate, patience=args.patience, min_lr=args.lr_min)
     if args.sample_softmax > 0:
         scheduler_sparse = optim.lr_scheduler.ReduceLROnPlateau(optimizer_sparse,
-            factor=args.decay_rate, patience=args.patience, min_lr=args.lr_min)
+                                                                factor=args.decay_rate, patience=args.patience,
+                                                                min_lr=args.lr_min)
 elif args.scheduler == 'constant':
     pass
 
@@ -372,9 +387,9 @@ if args.cuda and args.fp16:
     # If args.dynamic_loss_scale is False, static_loss_scale will be used.
     # If args.dynamic_loss_scale is True, it will take precedence over static_loss_scale.
     optimizer = FP16_Optimizer(optimizer,
-                               static_loss_scale = args.static_loss_scale,
-                               dynamic_loss_scale = args.dynamic_loss_scale,
-                               dynamic_loss_args = {'init_scale': 2 ** 16})
+                               static_loss_scale=args.static_loss_scale,
+                               dynamic_loss_scale=args.dynamic_loss_scale,
+                               dynamic_loss_args={'init_scale': 2 ** 16})
 
 if args.restart:
     if os.path.exists(os.path.join(args.restart_dir, 'optimizer.pt')):
@@ -391,6 +406,7 @@ logging('=' * 100)
 logging('#params = {}'.format(args.n_all_param))
 logging('#non emb params = {}'.format(args.n_nonemb_param))
 
+
 ###############################################################################
 # Training code
 ###############################################################################
@@ -403,10 +419,10 @@ def evaluate(eval_iter):
     # Otherwise, make the mem_len longer and keep the ext_len the same.
     if args.mem_len == 0:
         model.reset_length(args.eval_tgt_len,
-            args.ext_len+args.tgt_len-args.eval_tgt_len, args.mem_len)
+                           args.ext_len + args.tgt_len - args.eval_tgt_len, args.mem_len)
     else:
         model.reset_length(args.eval_tgt_len,
-            args.ext_len, args.mem_len+args.tgt_len-args.eval_tgt_len)
+                           args.ext_len, args.mem_len + args.tgt_len - args.eval_tgt_len)
 
     # Evaluation
     total_len, total_loss = 0, 0.
@@ -496,13 +512,15 @@ def train():
             elapsed = time.time() - log_start_time
             log_str = '| epoch {:3d} step {:>8d} | {:>6d} batches | lr {:.3g} ' \
                       '| ms/batch {:5.2f} | loss {:5.2f}'.format(
-                epoch, train_step, batch+1, optimizer.param_groups[0]['lr'],
-                elapsed * 1000 / args.log_interval, cur_loss)
+                epoch, train_step, batch + 1, optimizer.param_groups[0]['lr'],
+                                   elapsed * 1000 / args.log_interval, cur_loss)
             if args.dataset in ['enwik8', 'text8']:
                 log_str += ' | bpc {:9.5f}'.format(cur_loss / math.log(2))
             else:
                 log_str += ' | ppl {:9.3f}'.format(math.exp(cur_loss))
             logging(log_str)
+            if args.wandb:
+                wandb.log({"train_loss": cur_loss, "learning rate": optimizer.param_groups[0]['lr']}, step=train_step)
             train_loss = 0
             log_start_time = time.time()
 
@@ -518,6 +536,8 @@ def train():
             else:
                 log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
             logging(log_str)
+            if args.wandb:
+                wandb.log({"valid_loss": val_loss}, step=train_step)
             logging('-' * 100)
             # Save the model if the validation loss is the best we've seen so far.
             if not best_val_loss or val_loss < best_val_loss:
@@ -538,6 +558,7 @@ def train():
 
         if train_step == args.max_step:
             break
+
 
 # Loop over epochs.
 train_step = 0
