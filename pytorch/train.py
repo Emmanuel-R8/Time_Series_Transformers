@@ -11,12 +11,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from argparsing import parser
 from data_utils import get_lm_corpus
 from mem_transformer import MemTransformerLM
 from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel
 from utils.initialization import weights_init
+from utils.argparsing import parser
 
 args = parser.parse_args()
 args.tied = not args.not_tied
