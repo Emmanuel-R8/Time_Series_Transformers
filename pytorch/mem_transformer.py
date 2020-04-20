@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchviz import make_dot
 
 sys.path.append('utils')
 from proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
@@ -754,6 +755,10 @@ class MemTransformerLM(nn.Module):
         else:
             loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.reshape(-1))
             loss = loss.view(tgt_len, -1)
+
+        graph = make_dot(loss, params=dict(self.named_parameters()))
+        graph.format = "png"
+        graph.render("transfoXL")
 
         if new_mems is None:
             return [loss]
