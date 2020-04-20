@@ -442,8 +442,6 @@ if __name__ == "__main__":
     # At any point you can hit Ctrl + C to break out of training early.
     try:
         for epoch in itertools.count(start=1):
-            print(args.expand)
-            print(args.expansion_dict)
             train(para_model, optimizers, schedulers)
             if train_step == args.max_step:
                 logging('-' * 100)
@@ -451,7 +449,7 @@ if __name__ == "__main__":
                 break
             if args.expand and str(epoch) in args.expansion_dict:
                 extra = int(args.expansion_dict[str(epoch)])
-                print(f"adding {extra} layers at epoch {epoch} with method {args.expand}")
+                logging(f"adding {extra} layers at epoch {epoch} with method {args.expand}")
                 model.expand_layers(extra, initialization=args.expand, function=initialization_func)
 
 
