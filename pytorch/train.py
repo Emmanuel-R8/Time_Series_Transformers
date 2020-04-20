@@ -444,15 +444,15 @@ if __name__ == "__main__":
         for epoch in itertools.count(start=1):
             print(args.expand)
             print(args.expansion_dict)
-            if args.expand and str(epoch) in args.expansion_dict:
-                extra = int(args.expansion_dict[str(epoch)])
-                print(f"adding {extra} layers at epoch {epoch} with method {args.expand}")
-                model.expand_layers(extra, initialization=args.expand, function=initialization_func)
             train(para_model, optimizers, schedulers)
             if train_step == args.max_step:
                 logging('-' * 100)
                 logging('End of training')
                 break
+            if args.expand and str(epoch) in args.expansion_dict:
+                extra = int(args.expansion_dict[str(epoch)])
+                print(f"adding {extra} layers at epoch {epoch} with method {args.expand}")
+                model.expand_layers(extra, initialization=args.expand, function=initialization_func)
 
 
     except KeyboardInterrupt:
