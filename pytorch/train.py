@@ -199,6 +199,22 @@ def evaluate(eval_iter, model):
     return total_loss / total_len
 
 
+def log_val(val_loss):
+    logging('-' * 100)
+    log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
+              '| valid loss {:5.2f}'.format(
+        train_step // args.eval_interval, train_step,
+        (time.time() - eval_start_time), val_loss)
+    if args.dataset in ['enwik8', 'text8']:
+        log_str += ' | bpc {:9.5f}'.format(val_loss / math.log(2))
+    else:
+        log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
+    logging(log_str)
+    if args.wandb:
+        wandb.log({"valid_loss": val_loss}, step=train_step)
+    logging('-' * 100)
+
+
 def train(model, optimizers, schedulers):
     # Turn on training mode which enables dropout.
     optimizer, optimizer_sparse = optimizers
@@ -282,19 +298,7 @@ def train(model, optimizers, schedulers):
 
         if train_step % args.eval_interval == 0:
             val_loss = evaluate(va_iter, model)
-            logging('-' * 100)
-            log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
-                      '| valid loss {:5.2f}'.format(
-                train_step // args.eval_interval, train_step,
-                (time.time() - eval_start_time), val_loss)
-            if args.dataset in ['enwik8', 'text8']:
-                log_str += ' | bpc {:9.5f}'.format(val_loss / math.log(2))
-            else:
-                log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
-            logging(log_str)
-            if args.wandb:
-                wandb.log({"valid_loss": val_loss}, step=train_step)
-            logging('-' * 100)
+            log_val(val_loss)
             # Save the model if the validation loss is the best we've seen so far.
             if not best_val_loss or val_loss < best_val_loss:
                 if not args.debug:
@@ -451,6 +455,9 @@ if __name__ == "__main__":
                 extra = int(args.expansion_dict[str(epoch)])
                 logging(f"adding {extra} layers at epoch {epoch} with method {args.expand}")
                 model.expand_layers(extra, initialization=args.expand, function=initialization_func)
+                logging(f"reevaluating")
+                val_loss = evaluate(va_iter, model)
+                log_val(val_loss)
 
 
     except KeyboardInterrupt:
