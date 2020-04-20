@@ -1,4 +1,13 @@
 import argparse
+import json
+
+class StoreDictKeyPair(argparse.Action):
+     def __call__(self, parser, namespace, values, option_string=None):
+         my_dict = {}
+         for kv in values.split(","):
+             k,v = kv.split("=")
+             my_dict[k] = v
+         setattr(namespace, self.dest, my_dict)
 
 parser = argparse.ArgumentParser(description='PyTorch Transformer Language Model')
 parser.add_argument('--data', type=str, default='../data/wikitext-103',
@@ -127,4 +136,8 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
                          ' supersedes --static-loss-scale.')
 parser.add_argument('--wandb', action='store_true',
                     help='Use weights and biases logging.')
-
+parser.add_argument('--expand', type=str, default=None,
+                    help='Expand models throughout training.')
+parser.add_argument("--expansion_dict", action=StoreDictKeyPair, metavar="KEY1=VAL1,KEY2=VAL2...", default={},
+                    help='Pass a dictionary formatted "KEYi=VALi,KEYj=VALj..."'
+                         ' to indicate how many layers should be added at which epochs')

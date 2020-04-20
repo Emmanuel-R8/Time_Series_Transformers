@@ -55,8 +55,8 @@ def update_dropatt(m):
     if hasattr(m, 'dropatt'):
         m.dropatt.p = args.dropatt
 
-def parallelize_model(model):
 
+def parallelize_model(model):
     if args.multi_gpu:
         model = model.to(device)
         if args.gpu0_bsz >= 0:
@@ -120,6 +120,7 @@ def build_optimizer(model):
 
     return optimizer, optimizer_sparse
 
+
 def build_scheduler(optimizers):
     optimizer, optimizer_sparse = optimizers
     scheduler_sparse = None
@@ -143,11 +144,11 @@ def build_scheduler(optimizers):
                 return 1. / (step ** 0.5) if step > args.warmup_step \
                     else step / (args.warmup_step ** 1.5)
 
-
         scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     elif args.scheduler == 'dev_perf':
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
-                                                         factor=args.decay_rate, patience=args.patience, min_lr=args.lr_min)
+                                                         factor=args.decay_rate, patience=args.patience,
+                                                         min_lr=args.lr_min)
         if args.sample_softmax > 0:
             scheduler_sparse = optim.lr_scheduler.ReduceLROnPlateau(optimizer_sparse,
                                                                     factor=args.decay_rate, patience=args.patience,
@@ -165,7 +166,7 @@ def build_scheduler(optimizers):
 # Training code
 ###############################################################################
 
-def evaluate(eval_iter):
+def evaluate(eval_iter, model):
     # Turn on evaluation mode which disables dropout.
     model.eval()
 
@@ -183,7 +184,7 @@ def evaluate(eval_iter):
     with torch.no_grad():
         mems = tuple()
         for i, (data, target, seq_len) in enumerate(eval_iter):
-            if args.max_eval_steps > 0 and i >= args.max_eval_steps:
+            if i >= args.max_eval_steps > 0:
                 break
             ret = model(data, target, *mems)
             loss, mems = ret[0], ret[1:]
@@ -280,7 +281,7 @@ def train(model, optimizers, schedulers):
             log_start_time = time.time()
 
         if train_step % args.eval_interval == 0:
-            val_loss = evaluate(va_iter)
+            val_loss = evaluate(va_iter, model)
             logging('-' * 100)
             log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
                       '| valid loss {:5.2f}'.format(
@@ -340,6 +341,7 @@ if __name__ == "__main__":
 
     if args.wandb:
         import wandb
+
         logged_params = {"dataset": args.dataset,
                          "sequence_length": args.tgt_len,
                          "memory_length": args.mem_len,
@@ -384,6 +386,11 @@ if __name__ == "__main__":
     # Define model
     ###############################################################################
 
+    initialization_func = partial(weights_init,
+                                  init=args.init,
+                                  init_range=args.init_range,
+                                  init_std=args.init_std,
+                                  proj_init_std=args.proj_init_std)
     if args.restart:
         with open(os.path.join(args.restart_dir, 'model.pt'), 'rb') as f:
             model = torch.load(f)
@@ -399,17 +406,9 @@ if __name__ == "__main__":
                                  ext_len=args.ext_len, mem_len=args.mem_len, cutoffs=cutoffs,
                                  same_length=args.same_length, attn_type=args.attn_type,
                                  clamp_len=args.clamp_len, sample_softmax=args.sample_softmax)
-        model.apply(partial(weights_init,
-                            init=args.init,
-                            init_range=args.init_range,
-                            init_std=args.init_std,
-                            proj_init_std=args.proj_init_std))
+        model.apply(initialization_func)
         # debug
-        # model.word_emb.apply(partial(weights_init,
-        #                             init=args.init,
-        #                             init_range=args.init_range,
-        #                             init_std=args.init_std,
-        #                             proj_init_std=args.proj_init_std))
+        # model.word_emb.apply(initialization_func)
         # ensure embedding init is not overridden by out_layer in case of weight sharing
     args.n_all_param = sum([p.nelement() for p in model.parameters()])
     args.n_nonemb_param = sum([p.nelement() for p in model.layers.parameters()])
@@ -424,8 +423,8 @@ if __name__ == "__main__":
     if args.fp16:
         model = model.half()
 
-    model = parallelize_model(model)
-    optimizers = build_optimizer(model)
+    para_model = parallelize_model(model)
+    optimizers = build_optimizer(para_model)
     schedulers = build_scheduler(optimizers)
 
     ###############################################################################
@@ -443,11 +442,19 @@ if __name__ == "__main__":
     # At any point you can hit Ctrl + C to break out of training early.
     try:
         for epoch in itertools.count(start=1):
-            train(model, optimizers, schedulers)
+            print(args.expand)
+            print(args.expansion_dict)
+            if args.expand and str(epoch) in args.expansion_dict:
+                extra = int(args.expansion_dict[str(epoch)])
+                print(f"adding {extra} layers at epoch {epoch} with method {args.expand}")
+                model.expand_layers(extra, initialization=args.expand, function=initialization_func)
+            train(para_model, optimizers, schedulers)
             if train_step == args.max_step:
                 logging('-' * 100)
                 logging('End of training')
                 break
+
+
     except KeyboardInterrupt:
         logging('-' * 100)
         logging('Exiting from training early')
@@ -458,7 +465,7 @@ if __name__ == "__main__":
     para_model = model.to(device)
 
     # Run on test data.
-    test_loss = evaluate(te_iter)
+    test_loss = evaluate(te_iter, para_model)
     logging('=' * 100)
     if args.dataset in ['enwik8', 'text8']:
         logging('| End of training | test loss {:5.2f} | test bpc {:9.5f}'.format(
