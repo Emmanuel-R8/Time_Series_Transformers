@@ -450,7 +450,7 @@ if __name__ == "__main__":
     try:
         for epoch in itertools.count(start=1):
             train(para_model, optimizers, schedulers)
-            if train_step == args.max_step:
+            if train_step >= args.max_step:
                 logging('-' * 100)
                 logging('End of training')
                 break

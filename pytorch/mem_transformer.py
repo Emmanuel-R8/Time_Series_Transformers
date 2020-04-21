@@ -513,20 +513,23 @@ class MemTransformerLM(nn.Module):
         self.d_model = d_model
         self.n_head = n_head
         self.d_head = d_head
+        self.d_inner = d_inner
+        self.n_layer = n_layer
+        self.attn_type = attn_type
 
-        self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs,
-                                          div_val=div_val)
 
         self.drop = nn.Dropout(dropout)
-
-        self.n_layer = n_layer
+        self.dropout = dropout
+        self.dropatt = dropatt
+        self.pre_lnorm = pre_lnorm
 
         self.tgt_len = tgt_len
         self.mem_len = mem_len
         self.ext_len = ext_len
         self.max_klen = tgt_len + ext_len + mem_len
 
-        self.attn_type = attn_type
+        self.word_emb = AdaptiveEmbedding(n_token, d_embed, d_model, cutoffs,
+                                          div_val=div_val)
 
         self.layers = nn.ModuleList()
         if attn_type == 0:  # the default attention
@@ -739,22 +742,13 @@ class MemTransformerLM(nn.Module):
 
     def expand_layers(self, n_add, initialization="repeat", function=None):
         assert self.attn_type == 0, f"only works with default attention mode, not mode {self.attn}"
-        assert initialization in ["naive", "repeat", "function", "zero_expectancy"], \
+        assert initialization in ["naive", "repeat", "reinit", "zero_expectancy"], \
             f"initialization mode {initialization} not implemented"
-        if initialization == "repeat":
-            for _ in range(n_add):
-                self.layers.append(deepcopy(self.layers[-1]))
-        else:
-            for _ in range(n_add):
-                new_layer = (
-                    RelPartialLearnableDecoderLayer(
-                        self.n_head, self.d_model, self.d_head, self.d_inner, self.dropout,
-                        tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,
-                        dropatt=self.dropatt, pre_lnorm=self.pre_lnorm)
-                )
-                if initialization == "function":
-                    new_layer.apply(function)
-                self.layers.append(new_layer)
+        for _ in range(n_add):
+            new_layer = deepcopy(self.layers[-1])
+            if initialization == "reinit":
+                new_layer.apply(function)
+            self.layers.append(new_layer)
         self.n_layer += n_add
 
     def forward(self, data, target, *mems):
