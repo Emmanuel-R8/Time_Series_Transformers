@@ -313,6 +313,24 @@ def train(model, optimizers, schedulers):
             break
 
 
+def expand_model(strategy, expansion_dict, model, optimizers, va_iter):
+    optimizer, _ = optimizers
+    # pre-expansion validation
+    logging(f"evaluating before expanding")
+    val_loss = evaluate(va_iter, model)
+    log_val(val_loss)
+    # expansion
+    extra = int(expansion_dict[str(epoch)])
+    logging(f"adding {extra} layers at epoch {epoch} with method {strategy}")
+    new_layers = model.expand_layers(extra, initialization=strategy, function=initialization_func)
+    # optimizer update
+    optimizer.add_param_group({'params': new_layers.parameters()})
+    # post-expansion validation
+    logging(f"reevaluating")
+    val_loss = evaluate(va_iter, model)
+    log_val(val_loss)
+
+
 if __name__ == "__main__":
 
     # Set the random seed manually for reproducibility.
@@ -348,7 +366,9 @@ if __name__ == "__main__":
                          "n_head": args.n_head,
                          "dropout": args.dropout,
                          "div_val": args.div_val,
-                         "codebase": "CMU"
+                         "codebase": "CMU",
+                         "expansion_style": args.expand,
+                         "expansion_times": args.expansion_dict
                          }
         wandb.init(project="salamander", config=logged_params)
 
@@ -448,22 +468,13 @@ if __name__ == "__main__":
     # At any point you can hit Ctrl + C to break out of training early.
     try:
         for epoch in itertools.count(start=1):
-            train(para_model, optimizers, schedulers)
             if args.expand and str(epoch) in args.expansion_dict:
-                logging(f"evaluating before expanding")
-                val_loss = evaluate(va_iter, model)
-                log_val(val_loss)
+                expand_model(args.expand, args.expansion_dict, model, optimizers, va_iter)
+            train(para_model, optimizers, schedulers)
             if train_step >= args.max_step:
                 logging('-' * 100)
                 logging('End of training')
                 break
-            if args.expand and str(epoch) in args.expansion_dict:
-                extra = int(args.expansion_dict[str(epoch)])
-                logging(f"adding {extra} layers at epoch {epoch} with method {args.expand}")
-                model.expand_layers(extra, initialization=args.expand, function=initialization_func)
-                logging(f"reevaluating")
-                val_loss = evaluate(va_iter, model)
-                log_val(val_loss)
 
 
     except KeyboardInterrupt:

@@ -741,6 +741,7 @@ class MemTransformerLM(nn.Module):
         return core_out, new_mems
 
     def expand_layers(self, n_add, initialization="repeat", function=None):
+        new_layers = nn.ModuleList([])
         assert self.attn_type == 0, f"only works with default attention mode, not mode {self.attn}"
         assert initialization in ["naive", "repeat", "reinit", "zero_expectancy"], \
             f"initialization mode {initialization} not implemented"
@@ -748,8 +749,10 @@ class MemTransformerLM(nn.Module):
             new_layer = deepcopy(self.layers[-1])
             if initialization == "reinit":
                 new_layer.apply(function)
-            self.layers.append(new_layer)
+            new_layers.append(new_layer)
+        self.layers.extend(new_layers)
         self.n_layer += n_add
+        return new_layers
 
     def forward(self, data, target, *mems):
         # nn.DataParallel does not allow size(0) tensors to be broadcasted.
