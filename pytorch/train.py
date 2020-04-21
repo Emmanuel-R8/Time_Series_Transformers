@@ -123,6 +123,8 @@ def build_optimizer(model):
 
 def build_scheduler(optimizers):
     optimizer, optimizer_sparse = optimizers
+    if isinstance(optimizer, FP16_Optimizer):
+        optimizer = optimizer.optimizer
     scheduler_sparse = None
     if args.scheduler == 'cosine':
         # here we do not set eta_min to lr_min to be backward compatible
