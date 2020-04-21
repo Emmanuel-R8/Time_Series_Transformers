@@ -450,6 +450,10 @@ if __name__ == "__main__":
     try:
         for epoch in itertools.count(start=1):
             train(para_model, optimizers, schedulers)
+            if args.expand and str(epoch) in args.expansion_dict:
+                logging(f"evaluating before expanding")
+                val_loss = evaluate(va_iter, model)
+                log_val(val_loss)
             if train_step >= args.max_step:
                 logging('-' * 100)
                 logging('End of training')
