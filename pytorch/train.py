@@ -110,21 +110,11 @@ def build_optimizer(model):
         else:
             print('Optimizer was not saved. Start from scratch.')
 
-    if args.cuda and args.fp16:
-        # If args.dynamic_loss_scale is False, static_loss_scale will be used.
-        # If args.dynamic_loss_scale is True, it will take precedence over static_loss_scale.
-        optimizer = FP16_Optimizer(optimizer,
-                                   static_loss_scale=args.static_loss_scale,
-                                   dynamic_loss_scale=args.dynamic_loss_scale,
-                                   dynamic_loss_args={'init_scale': 2 ** 16})
-
     return optimizer, optimizer_sparse
 
 
 def build_scheduler(optimizers):
     optimizer, optimizer_sparse = optimizers
-    if isinstance(optimizer, FP16_Optimizer):
-        optimizer = optimizer.optimizer
     scheduler_sparse = None
     if args.scheduler == 'cosine':
         # here we do not set eta_min to lr_min to be backward compatible
@@ -433,6 +423,15 @@ if __name__ == "__main__":
     para_model = parallelize_model(model)
     optimizers = build_optimizer(para_model)
     schedulers = build_scheduler(optimizers)
+
+    if args.cuda and args.fp16:
+        # If args.dynamic_loss_scale is False, static_loss_scale will be used.
+        # If args.dynamic_loss_scale is True, it will take precedence over static_loss_scale.
+        optimizer, sparse_optimizer = optimizers
+        optimizers = FP16_Optimizer(optimizer,
+                                    static_loss_scale=args.static_loss_scale,
+                                    dynamic_loss_scale=args.dynamic_loss_scale,
+                                    dynamic_loss_args={'init_scale': 2 ** 16}), sparse_optimizer
 
     ###############################################################################
     # Training loop
