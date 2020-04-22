@@ -500,7 +500,7 @@ if __name__ == "__main__":
         for epoch in itertools.count(start=first_epoch):
             # we check before the training loop; expanding at epoch 0 means before training (for debug purposes)
             if args.expand and str(epoch - 1) in args.expansion_dict:
-                n_add = args.expansion_dict[str(epoch - 1)]
+                n_add = int(args.expansion_dict[str(epoch - 1)])
                 expand_model(args.expand, n_add, model, optimizers, schedulers, va_iter)
             train(para_model, optimizers, schedulers)
             if train_step >= args.max_step:
