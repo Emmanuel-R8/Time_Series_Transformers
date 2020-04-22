@@ -313,8 +313,9 @@ def train(model, optimizers, schedulers):
             break
 
 
-def expand_model(strategy, expansion_dict, model, optimizers, va_iter):
+def expand_model(strategy, expansion_dict, model, optimizers, schedulers, va_iter):
     optimizer, _ = optimizers
+    scheduler, _ = schedulers
     # pre-expansion validation
     logging(f"evaluating before expanding")
     val_loss = evaluate(va_iter, model)
@@ -324,7 +325,9 @@ def expand_model(strategy, expansion_dict, model, optimizers, va_iter):
     logging(f"adding {extra} layers at epoch {epoch} with method {strategy}")
     new_layers = model.expand_layers(extra, initialization=strategy, function=initialization_func)
     # optimizer update
-    optimizer.add_param_group({'params': new_layers.parameters()})
+    optimizer.add_param_group({'params': new_layers.parameters(), 'lr': optimizer.param_groups[0]["lr"],
+                               'initial_lr': optimizer.param_groups[0]["initial_lr"]})
+    scheduler.base_lrs.append(optimizer.param_groups[-1]["initial_lr"])
     # post-expansion validation
     logging(f"reevaluating")
     val_loss = evaluate(va_iter, model)
@@ -469,7 +472,7 @@ if __name__ == "__main__":
     try:
         for epoch in itertools.count(start=1):
             if args.expand and str(epoch) in args.expansion_dict:
-                expand_model(args.expand, args.expansion_dict, model, optimizers, va_iter)
+                expand_model(args.expand, args.expansion_dict, model, optimizers, schedulers, va_iter)
             train(para_model, optimizers, schedulers)
             if train_step >= args.max_step:
                 logging('-' * 100)
