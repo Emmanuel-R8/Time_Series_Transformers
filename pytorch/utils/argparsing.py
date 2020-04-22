@@ -141,3 +141,7 @@ parser.add_argument('--expand', type=str, default=None,
 parser.add_argument("--expansion_dict", action=StoreDictKeyPair, metavar="KEY1=VAL1,KEY2=VAL2...", default={},
                     help='Pass a dictionary formatted "KEYi=VALi,KEYj=VALj..."'
                          ' to indicate how many layers should be added at which epochs')
+parser.add_argument('--log_first_epochs', type=int, default=0,
+                    help='number of first epochs to log')
+parser.add_argument('--restart_from', type=int, default=None,
+                    help="restart from specific epoch checkpoint")

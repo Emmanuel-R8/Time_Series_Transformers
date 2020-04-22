@@ -35,7 +35,7 @@ class PositionwiseFF(nn.Module):
 
         self.d_model = d_model
         self.d_inner = d_inner
-        self.dropout = dropout
+        self.dropout_p = dropout
 
         self.CoreNet = nn.Sequential(
             nn.Linear(d_model, d_inner), nn.ReLU(inplace=True),
@@ -73,7 +73,7 @@ class MultiHeadAttn(nn.Module):
         self.n_head = n_head
         self.d_model = d_model
         self.d_head = d_head
-        self.dropout = dropout
+        self.dropout_p = dropout
 
         self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
         self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
@@ -148,7 +148,7 @@ class RelMultiHeadAttn(nn.Module):
         self.n_head = n_head
         self.d_model = d_model
         self.d_head = d_head
-        self.dropout = dropout
+        self.dropout_p = dropout
 
         self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
 
@@ -507,6 +507,7 @@ class MemTransformerLM(nn.Module):
                  sample_softmax=-1, ):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
+        self.training_steps = 0
 
         d_embed = d_model if d_embed is None else d_embed
         self.d_embed = d_embed
@@ -517,10 +518,9 @@ class MemTransformerLM(nn.Module):
         self.n_layer = n_layer
         self.attn_type = attn_type
 
-
         self.drop = nn.Dropout(dropout)
-        self.dropout = dropout
-        self.dropatt = dropatt
+        self.dropout_p = dropout
+        self.dropatt_p = dropatt
         self.pre_lnorm = pre_lnorm
 
         self.tgt_len = tgt_len
@@ -818,7 +818,7 @@ if __name__ == '__main__':
         for d_embed in [200, 100]:
             model = MemTransformerLM(args.n_token, args.n_layer, args.n_head,
                                      args.d_model, args.d_head, args.d_inner, args.dropout,
-                                     dropatt=args.dropout, tie_weight=True,
+                                     dropatt=args.dropatt, tie_weight=True,
                                      d_embed=d_embed, div_val=div_val,
                                      tie_projs=tie_projs, pre_lnorm=True,
                                      tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,

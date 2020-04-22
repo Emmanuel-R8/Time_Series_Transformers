@@ -49,11 +49,15 @@ def update_dropout(m):
     if classname.find('Dropout') != -1:
         if hasattr(m, 'p'):
             m.p = args.dropout
+    if hasattr(m, "dropout_p"):
+        m.dropout_p = args.dropatt
 
 
 def update_dropatt(m):
     if hasattr(m, 'dropatt'):
         m.dropatt.p = args.dropatt
+    if hasattr(m, 'dropatt_p'):
+        m.dropatt_p = args.dropatt
 
 
 def parallelize_model(model):
@@ -103,12 +107,18 @@ def build_optimizer(model):
         raise ValueError(f"optimizer type {args.optim} not recognized")
 
     if args.restart:
-        if os.path.exists(os.path.join(args.restart_dir, 'optimizer.pt')):
+        if args.restart_from is not None:
+            optim_name = f'optimizer_{args.restart_from}.pt'
+        else:
+            optim_name = 'optimizer.pt'
+        optim_file_name = os.path.join(args.restart_dir, optim_name)
+        logging(f"reloading {optim_file_name}")
+        if os.path.exists(os.path.join(args.restart_dir, optim_name)):
             with open(os.path.join(args.restart_dir, 'optimizer.pt'), 'rb') as optim_file:
                 opt_state_dict = torch.load(optim_file)
                 optimizer.load_state_dict(opt_state_dict)
         else:
-            print('Optimizer was not saved. Start from scratch.')
+            logging('Optimizer was not saved. Start from scratch.')
 
     return optimizer, optimizer_sparse
 
@@ -250,13 +260,13 @@ def train(model, optimizers, schedulers):
         else:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
-        # debug
         optimizer.step()
         if args.sample_softmax > 0:
             optimizer_sparse.step()
 
         # step-wise learning rate annealing
         train_step += 1
+        model.training_steps += 1
         if args.scheduler in ['cosine', 'constant', 'dev_perf']:
             # linear warmup stage
             if train_step < args.warmup_step:
@@ -313,7 +323,7 @@ def train(model, optimizers, schedulers):
             break
 
 
-def expand_model(strategy, expansion_dict, model, optimizers, schedulers, va_iter):
+def expand_model(strategy, n_add, model, optimizers, schedulers, va_iter):
     optimizer, _ = optimizers
     scheduler, _ = schedulers
     # pre-expansion validation
@@ -321,9 +331,8 @@ def expand_model(strategy, expansion_dict, model, optimizers, schedulers, va_ite
     val_loss = evaluate(va_iter, model)
     log_val(val_loss)
     # expansion
-    extra = int(expansion_dict[str(epoch)])
-    logging(f"adding {extra} layers at epoch {epoch} with method {strategy}")
-    new_layers = model.expand_layers(extra, initialization=strategy, function=initialization_func)
+    logging(f"adding {n_add} layers before starting epoch {epoch} with method {strategy}")
+    new_layers = model.expand_layers(n_add, initialization=strategy, function=initialization_func)
     # optimizer update
     optimizer.add_param_group({'params': new_layers.parameters(), 'lr': optimizer.param_groups[0]["lr"],
                                'initial_lr': optimizer.param_groups[0]["initial_lr"]})
@@ -412,7 +421,13 @@ if __name__ == "__main__":
                                   init_std=args.init_std,
                                   proj_init_std=args.proj_init_std)
     if args.restart:
-        with open(os.path.join(args.restart_dir, 'model.pt'), 'rb') as f:
+        if args.restart_from is not None:
+            model_name = f'model_{args.restart_from}.pt'
+        else:
+            model_name = 'model.pt'
+        model_file_name = os.path.join(args.restart_dir, model_name)
+        logging(f"reloading {model_file_name}")
+        with open(model_file_name, 'rb') as f:
             model = torch.load(f)
         if not args.fp16:
             model = model.float()
@@ -445,39 +460,56 @@ if __name__ == "__main__":
 
     para_model = parallelize_model(model)
     optimizers = build_optimizer(para_model)
+    optimizer, optimizer_sparse = optimizers
     schedulers = build_scheduler(optimizers)
+    scheduler, scheduler_sparse = schedulers
 
     if args.cuda and args.fp16:
         # If args.dynamic_loss_scale is False, static_loss_scale will be used.
         # If args.dynamic_loss_scale is True, it will take precedence over static_loss_scale.
-        optimizer, sparse_optimizer = optimizers
-        optimizers = FP16_Optimizer(optimizer,
+        optimizer = FP16_Optimizer(optimizer,
                                     static_loss_scale=args.static_loss_scale,
                                     dynamic_loss_scale=args.dynamic_loss_scale,
-                                    dynamic_loss_args={'init_scale': 2 ** 16}), sparse_optimizer
+                                    dynamic_loss_args={'init_scale': 2 ** 16})
 
     ###############################################################################
     # Training loop
     ###############################################################################
 
     # Loop over epochs.
-    train_step = 0
+    train_step = model.training_steps
     train_loss = 0
     best_val_loss = None
+    # Reload previous step number in case of args.restart
+    if train_step > 0:
+        logging(f"restarting from step {train_step}")
 
     log_start_time = time.time()
     eval_start_time = time.time()
 
     # At any point you can hit Ctrl + C to break out of training early.
     try:
-        for epoch in itertools.count(start=1):
+        if args.restart_from:
+            first_epoch = args.restart_from + 1
+        else:
+            first_epoch = 1
+        for epoch in itertools.count(start=first_epoch):
+            # we check before the training loop; expanding at epoch 0 means before training (for debug purposes)
+            if args.expand and str(epoch - 1) in args.expansion_dict:
+                n_add = args.expansion_dict[str(epoch - 1)]
+                expand_model(args.expand, n_add, model, optimizers, schedulers, va_iter)
             train(para_model, optimizers, schedulers)
             if train_step >= args.max_step:
                 logging('-' * 100)
                 logging('End of training')
                 break
-            if args.expand and str(epoch) in args.expansion_dict:
-                expand_model(args.expand, args.expansion_dict, model, optimizers, schedulers, va_iter)
+            if not args.debug and args.log_first_epochs:
+                if epoch <= args.log_first_epochs:
+                    logging(f"saving model at the end of epoch {epoch}")
+                    with open(os.path.join(args.work_dir, f'model_{epoch}.pt'), 'wb') as f:
+                        torch.save(model, f)
+                    with open(os.path.join(args.work_dir, f'optimizer_{epoch}.pt'), 'wb') as f:
+                        torch.save(optimizer.state_dict(), f)
 
 
     except KeyboardInterrupt:
