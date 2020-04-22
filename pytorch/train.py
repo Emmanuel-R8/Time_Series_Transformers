@@ -471,13 +471,13 @@ if __name__ == "__main__":
     # At any point you can hit Ctrl + C to break out of training early.
     try:
         for epoch in itertools.count(start=1):
-            if args.expand and str(epoch) in args.expansion_dict:
-                expand_model(args.expand, args.expansion_dict, model, optimizers, schedulers, va_iter)
             train(para_model, optimizers, schedulers)
             if train_step >= args.max_step:
                 logging('-' * 100)
                 logging('End of training')
                 break
+            if args.expand and str(epoch) in args.expansion_dict:
+                expand_model(args.expand, args.expansion_dict, model, optimizers, schedulers, va_iter)
 
 
     except KeyboardInterrupt:
