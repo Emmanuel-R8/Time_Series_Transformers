@@ -266,7 +266,11 @@ def train(model, optimizers, schedulers):
 
         # step-wise learning rate annealing
         train_step += 1
-        model.training_steps += 1
+        try:
+            model.training_steps += 1
+        # DataParallel
+        except AttributeError:
+            model.module.training_steps += 1
         if args.scheduler in ['cosine', 'constant', 'dev_perf']:
             # linear warmup stage
             if train_step < args.warmup_step:
