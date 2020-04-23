@@ -740,17 +740,24 @@ class MemTransformerLM(nn.Module):
 
         return core_out, new_mems
 
-    def expand_layers(self, n_add, initialization="repeat", function=None):
+    def expand_layers(self, n_add, strategy="repeat", function=None):
         new_layers = nn.ModuleList([])
         assert self.attn_type == 0, f"only works with default attention mode, not mode {self.attn}"
-        assert initialization in ["naive", "repeat", "reinit", "zero_expectancy"], \
-            f"initialization mode {initialization} not implemented"
+        assert strategy in ["naive", "repeat", "reinit", "repeat_bottom", "reinit_bottom", "zero_expectancy"], \
+            f"initialization mode {strategy} not implemented"
+        bottom = "bottom" in strategy
         for _ in range(n_add):
-            new_layer = deepcopy(self.layers[-1])
-            if initialization == "reinit":
+            new_layer = deepcopy(self.layers[0 if bottom else -1])
+            if "reinit" in strategy:
                 new_layer.apply(function)
             new_layers.append(new_layer)
-        self.layers.extend(new_layers)
+        if bottom:
+            # not as elegant as extending the end but we have to add modules one by one at the start
+            # the count i is to make sure they're in the same order in new_layers and self.layers
+            for i, layer in enumerate(new_layers):
+                self.layers.insert(i, layer)
+        else:
+            self.layers.extend(new_layers)
         self.n_layer += n_add
         return new_layers
 

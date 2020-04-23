@@ -336,7 +336,7 @@ def expand_model(strategy, n_add, model, optimizers, schedulers, va_iter):
     log_val(val_loss)
     # expansion
     logging(f"adding {n_add} layers before starting epoch {epoch} with method {strategy}")
-    new_layers = model.expand_layers(n_add, initialization=strategy, function=initialization_func)
+    new_layers = model.expand_layers(n_add, strategy=strategy, function=initialization_func)
     # optimizer update
     optimizer.add_param_group({'params': new_layers.parameters(), 'lr': optimizer.param_groups[0]["lr"],
                                'initial_lr': optimizer.param_groups[0]["initial_lr"]})
