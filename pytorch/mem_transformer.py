@@ -743,7 +743,7 @@ class MemTransformerLM(nn.Module):
     def expand_layers(self, n_add, strategy="repeat", function=None):
         new_layers = nn.ModuleList([])
         assert self.attn_type == 0, f"only works with default attention mode, not mode {self.attn}"
-        assert strategy in ["naive", "repeat", "reinit", "repeat_bottom", "reinit_bottom", "zero_expectancy"], \
+        assert strategy in ["repeat", "reinit", "repeat_bottom", "reinit_bottom", "zero_expectancy"], \
             f"initialization mode {strategy} not implemented"
         bottom = "bottom" in strategy
         for _ in range(n_add):

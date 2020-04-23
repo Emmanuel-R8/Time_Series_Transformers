@@ -136,8 +136,12 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
                          ' supersedes --static-loss-scale.')
 parser.add_argument('--wandb', action='store_true',
                     help='Use weights and biases logging.')
-parser.add_argument('--expand', type=str, default=None,
-                    help='Expand models throughout training.')
+parser.add_argument('--expand', type=str, default=None, help='Expand models throughout training.',
+                    choices=["repeat", "reinit", "repeat_bottom", "reinit_bottom", "zero_expectancy"])
+parser.add_argument('--integration', type=str, default=None, help='Learning tricks post-expansion',
+                    choices=["freeze", "reverse_distil_full", "reverse_distil_partial"])
+parser.add_argument('--integration_length', type=int, default=0,
+                    help='Number of batches for reverse distillation or freezing')
 parser.add_argument("--expansion_dict", action=StoreDictKeyPair, metavar="KEY1=VAL1,KEY2=VAL2...", default={},
                     help='Pass a dictionary formatted "KEYi=VALi,KEYj=VALj..."'
                          ' to indicate how many layers should be added at which epochs')

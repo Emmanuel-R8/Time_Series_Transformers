@@ -4,6 +4,7 @@ import math
 import os, sys
 import itertools
 from functools import partial
+import warnings
 
 import numpy as np
 
@@ -327,13 +328,18 @@ def train(model, optimizers, schedulers):
             break
 
 
-def expand_model(strategy, n_add, model, optimizers, schedulers, va_iter):
+def expand_model(strategy, integration, integration_length, n_add, model, optimizers, schedulers, tr_iter, va_iter):
     optimizer, _ = optimizers
     scheduler, _ = schedulers
+    if integration and (not integration_length or integration_length <= 0):
+        warnings.warn(f"integration {integration} passed but integration_length is {integration_length}")
     # pre-expansion validation
     logging(f"evaluating before expanding")
     val_loss = evaluate(va_iter, model)
     log_val(val_loss)
+    # infer example logits for reverse distillation
+    if "reverse_distil" in integration:
+        first_logits = get_original_batches(model, tr_iter, integration_length)
     # expansion
     logging(f"adding {n_add} layers before starting epoch {epoch} with method {strategy}")
     new_layers = model.expand_layers(n_add, strategy=strategy, function=initialization_func)
@@ -341,10 +347,91 @@ def expand_model(strategy, n_add, model, optimizers, schedulers, va_iter):
     optimizer.add_param_group({'params': new_layers.parameters(), 'lr': optimizer.param_groups[0]["lr"],
                                'initial_lr': optimizer.param_groups[0]["initial_lr"]})
     scheduler.base_lrs.append(optimizer.param_groups[-1]["initial_lr"])
+    # training loop for reverse distillation
+    if "reverse_distil" in integration:
+        fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration)
     # post-expansion validation
     logging(f"reevaluating")
     val_loss = evaluate(va_iter, model)
     log_val(val_loss)
+
+
+# reverse distillation util
+def get_original_batches(model, tr_iter, integration_length):
+    model.eval()
+    if args.batch_chunk > 1:
+        mems = [None for _ in range(args.batch_chunk)]
+        first_logits = [[] for _ in range(args.batch_chunk)]
+    else:
+        mems = None
+        first_logits = []
+    train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
+    with torch.no_grad():
+        for batch, (data, target, seq_len) in enumerate(train_iter):
+            if batch == integration_length:
+                break
+            if args.batch_chunk > 1:
+                data_chunks = torch.chunk(data, args.batch_chunk, 1)
+                for i in range(args.batch_chunk):
+                    data_i = data_chunks[i].contiguous()
+                    logits, mems[i] = model._forward(data_i, mems=mems[i])
+                    first_logits[i].append(logits)
+            else:
+                logits, mems = model._forward(data, mems=mems)
+                first_logits.append(logits)
+    return first_logits
+
+
+# reverse distillation trainer
+def fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration):
+    mse_loss = torch.nn.MSELoss()
+    if "partial" in integration:
+        distil_optimizer, distil_optimizer_sparse = build_optimizer(new_layers)
+    else:
+        distil_optimizer, distil_optimizer_sparse = build_optimizer(model)
+    if args.cuda and args.fp16:
+        distil_optimizer = FP16_Optimizer(distil_optimizer,
+                                   static_loss_scale=args.static_loss_scale,
+                                   dynamic_loss_scale=args.dynamic_loss_scale,
+                                   dynamic_loss_args={'init_scale': 2 ** 16})
+    model.train()
+    if args.batch_chunk > 1:
+        mems = [None for _ in range(args.batch_chunk)]
+    else:
+        mems = None
+    train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
+    for batch, (data, _, _) in enumerate(train_iter):
+        if batch == len(first_logits):
+            break
+        model.zero_grad()
+        if args.batch_chunk > 1:
+            data_chunks = torch.chunk(data, args.batch_chunk, 1)
+            for i in range(args.batch_chunk):
+                data_i = data_chunks[i].contiguous()
+                logits, mems[i] = model._forward(data_i, mems=mems[i])
+                target_logits = first_logits[i][batch]
+                loss = mse_loss(logits, target_logits) / args.batch_chunk
+                if args.fp16:
+                    distil_optimizer.backward(loss)
+                else:
+                    loss.backward()
+        else:
+            logits, mems = model._forward(data, mems=mems)
+            target_logits = first_logits[batch]
+            loss = mse_loss(logits, target_logits)
+            if args.fp16:
+                distil_optimizer.backward(loss)
+            else:
+                loss.backward()
+
+        if args.fp16:
+            distil_optimizer.clip_master_grads(args.clip)
+        else:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+
+        distil_optimizer.step()
+        if args.sample_softmax > 0:
+            distil_optimizer_sparse.step()
 
 
 if __name__ == "__main__":
@@ -472,9 +559,9 @@ if __name__ == "__main__":
         # If args.dynamic_loss_scale is False, static_loss_scale will be used.
         # If args.dynamic_loss_scale is True, it will take precedence over static_loss_scale.
         optimizer = FP16_Optimizer(optimizer,
-                                    static_loss_scale=args.static_loss_scale,
-                                    dynamic_loss_scale=args.dynamic_loss_scale,
-                                    dynamic_loss_args={'init_scale': 2 ** 16})
+                                   static_loss_scale=args.static_loss_scale,
+                                   dynamic_loss_scale=args.dynamic_loss_scale,
+                                   dynamic_loss_args={'init_scale': 2 ** 16})
 
     ###############################################################################
     # Training loop
@@ -495,13 +582,15 @@ if __name__ == "__main__":
     try:
         if args.restart_from:
             first_epoch = args.restart_from + 1
+            print(f"restarting from epoch {first_epoch}")
         else:
             first_epoch = 1
         for epoch in itertools.count(start=first_epoch):
             # we check before the training loop; expanding at epoch 0 means before training (for debug purposes)
             if args.expand and str(epoch - 1) in args.expansion_dict:
                 n_add = int(args.expansion_dict[str(epoch - 1)])
-                expand_model(args.expand, n_add, model, optimizers, schedulers, va_iter)
+                expand_model(args.expand, args.integration, args.integration_length,
+                             n_add, model, optimizers, schedulers, tr_iter, va_iter)
             train(para_model, optimizers, schedulers)
             if train_step >= args.max_step:
                 logging('-' * 100)
