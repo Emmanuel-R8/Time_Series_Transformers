@@ -75,7 +75,7 @@ def parallelize_model(model):
     return para_model
 
 
-def build_optimizer(model):
+def build_optimizer(model, reload=False):
     optimizer_sparse = None
     if args.optim.lower() == 'sgd':
         if args.sample_softmax > 0:
@@ -107,7 +107,7 @@ def build_optimizer(model):
     else:
         raise ValueError(f"optimizer type {args.optim} not recognized")
 
-    if args.restart:
+    if reload:
         if args.restart_from is not None:
             optim_name = f'optimizer_{args.restart_from}.pt'
         else:
@@ -386,9 +386,9 @@ def get_original_batches(model, tr_iter, integration_length):
 def fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration):
     mse_loss = torch.nn.MSELoss()
     if "partial" in integration:
-        distil_optimizer, distil_optimizer_sparse = build_optimizer(new_layers)
+        distil_optimizer, distil_optimizer_sparse = build_optimizer(new_layers, reload=False)
     else:
-        distil_optimizer, distil_optimizer_sparse = build_optimizer(model)
+        distil_optimizer, distil_optimizer_sparse = build_optimizer(model, reload=False)
     if args.cuda and args.fp16:
         distil_optimizer = FP16_Optimizer(distil_optimizer,
                                    static_loss_scale=args.static_loss_scale,
@@ -550,7 +550,7 @@ if __name__ == "__main__":
         model = model.half()
 
     para_model = parallelize_model(model)
-    optimizers = build_optimizer(para_model)
+    optimizers = build_optimizer(para_model, reload=args.restart)
     optimizer, optimizer_sparse = optimizers
     schedulers = build_scheduler(optimizers)
     scheduler, scheduler_sparse = schedulers
