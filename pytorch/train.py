@@ -331,8 +331,11 @@ def train(model, optimizers, schedulers):
 def expand_model(strategy, integration, integration_length, n_add, model, optimizers, schedulers, tr_iter, va_iter):
     optimizer, _ = optimizers
     scheduler, _ = schedulers
-    if integration and (not integration_length or integration_length <= 0):
-        warnings.warn(f"integration {integration} passed but integration_length is {integration_length}")
+    if integration:
+        if not integration_length or integration_length <= 0:
+            warnings.warn(f"integration {integration} passed but integration_length is {integration_length}")
+        else:
+            logging(f"applying integration trategy {integration} with integration length {integration_length}")
     # pre-expansion validation
     logging(f"evaluating before expanding")
     val_loss = evaluate(va_iter, model)
@@ -375,10 +378,10 @@ def get_original_batches(model, tr_iter, integration_length):
                 for i in range(args.batch_chunk):
                     data_i = data_chunks[i].contiguous()
                     logits, mems[i] = model._forward(data_i, mems=mems[i])
-                    first_logits[i].append(logits)
+                    first_logits[i].append(logits.cpu())
             else:
                 logits, mems = model._forward(data, mems=mems)
-                first_logits.append(logits)
+                first_logits.append(logits.cpu())
     return first_logits
 
 
@@ -409,7 +412,7 @@ def fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration)
             for i in range(args.batch_chunk):
                 data_i = data_chunks[i].contiguous()
                 logits, mems[i] = model._forward(data_i, mems=mems[i])
-                target_logits = first_logits[i][batch]
+                target_logits = first_logits[i][batch].to(logits.device)
                 loss = mse_loss(logits, target_logits) / args.batch_chunk
                 if args.fp16:
                     distil_optimizer.backward(loss)
@@ -417,7 +420,7 @@ def fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration)
                     loss.backward()
         else:
             logits, mems = model._forward(data, mems=mems)
-            target_logits = first_logits[batch]
+            target_logits = first_logits[batch].to(logits.device)
             loss = mse_loss(logits, target_logits)
             if args.fp16:
                 distil_optimizer.backward(loss)
