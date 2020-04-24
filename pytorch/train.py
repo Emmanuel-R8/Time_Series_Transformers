@@ -272,6 +272,13 @@ def train(model, optimizers, schedulers):
         # DataParallel
         except AttributeError:
             model.module.training_steps += 1
+        # check for yet-to-thaw parameters
+        if getattr(model, "freeze_countdown", 0) > 0:
+            model.freeze_countdown -= 1
+            # if this is the last step
+            if model.freeze_countdown == 0:
+                for parameter in model.parameters():
+                    parameter.requires_grad = True
         if args.scheduler in ['cosine', 'constant', 'dev_perf']:
             # linear warmup stage
             if train_step < args.warmup_step:
@@ -335,7 +342,7 @@ def expand_model(strategy, integration, integration_length, n_add, model, optimi
         if not integration_length or integration_length <= 0:
             warnings.warn(f"integration {integration} passed but integration_length is {integration_length}")
         else:
-            logging(f"applying integration trategy {integration} with integration length {integration_length}")
+            logging(f"applying integration strategy {integration} with integration length {integration_length}")
     # pre-expansion validation
     logging(f"evaluating before expanding")
     val_loss = evaluate(va_iter, model)
@@ -353,6 +360,10 @@ def expand_model(strategy, integration, integration_length, n_add, model, optimi
     # training loop for reverse distillation
     if "reverse_distil" in integration:
         fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration)
+    # freezing parameters for frozen restart, we do this afterwards else the new layers get copied also without grads
+    for param_group in optimizer.param_groups[:-1]:
+        for parameter in param_group['params']:
+            parameter.requires_grad = False
     # post-expansion validation
     logging(f"reevaluating")
     val_loss = evaluate(va_iter, model)
