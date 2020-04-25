@@ -221,6 +221,10 @@ def log_val(val_loss):
 
 def train(model, optimizers, schedulers):
     # Turn on training mode which enables dropout.
+    if isinstance(model, nn.DataParallel):
+        parent_model = model.module
+    else:
+        parent_model = model
     optimizer, optimizer_sparse = optimizers
     scheduler, scheduler_sparse = schedulers
     global train_step, train_loss, best_val_loss, eval_start_time, log_start_time
@@ -267,17 +271,13 @@ def train(model, optimizers, schedulers):
 
         # step-wise learning rate annealing
         train_step += 1
-        try:
-            model.training_steps += 1
-        # DataParallel
-        except AttributeError:
-            model.module.training_steps += 1
+        parent_model.training_steps += 1
         # check for yet-to-thaw parameters
-        if getattr(model, "freeze_countdown", 0) > 0:
-            model.freeze_countdown -= 1
+        if getattr(parent_model, "freeze_countdown", 0) > 0:
+            parent_model.freeze_countdown -= 1
             # if this is the last step
-            if model.freeze_countdown == 0:
-                for parameter in model.parameters():
+            if parent_model.freeze_countdown == 0:
+                for parameter in parent_model.parameters():
                     parameter.requires_grad = True
                 logging("thawing all parameters")
         if args.scheduler in ['cosine', 'constant', 'dev_perf']:
