@@ -362,11 +362,11 @@ def expand_model(strategy, integration, integration_length, n_add, model, optimi
     if "reverse_distil" in integration:
         fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration)
     # freezing parameters for frozen restart, we do this afterwards else the new layers get copied also without grads
-    if "freeze" in integration:
+    if "freeze" in integration and integration_length > 0:
         for param_group in optimizer.param_groups[:-1]:
             for parameter in param_group['params']:
                 parameter.requires_grad = False
-        model.freeze_countdown = 0
+        model.freeze_countdown = integration_length
     # post-expansion validation
     logging(f"reevaluating")
     val_loss = evaluate(va_iter, model)
