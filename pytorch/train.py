@@ -115,7 +115,7 @@ def build_optimizer(model, reload=False):
         optim_file_name = os.path.join(args.restart_dir, optim_name)
         logging(f"reloading {optim_file_name}")
         if os.path.exists(os.path.join(args.restart_dir, optim_name)):
-            with open(os.path.join(args.restart_dir, 'optimizer.pt'), 'rb') as optim_file:
+            with open(os.path.join(args.restart_dir, optim_name), 'rb') as optim_file:
                 opt_state_dict = torch.load(optim_file)
                 optimizer.load_state_dict(opt_state_dict)
         else:
