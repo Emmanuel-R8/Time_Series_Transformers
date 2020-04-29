@@ -137,7 +137,7 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
 parser.add_argument('--wandb', action='store_true',
                     help='Use weights and biases logging.')
 parser.add_argument('--expand', type=str, default=None, help='Expand models throughout training.',
-                    choices=["repeat", "reinit", "repeat_bottom", "reinit_bottom", "zero_expectancy"])
+                    choices=["repeat", "reinit", "repeat_bottom", "reinit_bottom", "duplicate"])
 parser.add_argument('--integration', type=str, default="", help='Learning tricks post-expansion',
                     choices=["freeze", "reverse_distil_full", "reverse_distil_partial"])
 parser.add_argument('--integration_length', type=int, default=0,

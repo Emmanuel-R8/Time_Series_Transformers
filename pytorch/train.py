@@ -345,9 +345,9 @@ def expand_model(strategy, integration, integration_length, n_add, model, optimi
         else:
             logging(f"applying integration strategy {integration} with integration length {integration_length}")
     # pre-expansion validation
-    logging(f"evaluating before expanding")
-    val_loss = evaluate(va_iter, model)
-    log_val(val_loss)
+    # logging(f"evaluating before expanding")
+    # val_loss = evaluate(va_iter, model)
+    # log_val(val_loss)
     # infer example logits for reverse distillation
     if "reverse_distil" in integration:
         first_logits = get_original_batches(model, tr_iter, integration_length)

@@ -741,23 +741,41 @@ class MemTransformerLM(nn.Module):
         return core_out, new_mems
 
     def expand_layers(self, n_add, strategy="repeat", function=None):
-        new_layers = nn.ModuleList([])
         assert self.attn_type == 0, f"only works with default attention mode, not mode {self.attn}"
-        assert strategy in ["repeat", "reinit", "repeat_bottom", "reinit_bottom", "zero_expectancy"], \
+        assert strategy in ["repeat", "reinit", "repeat_bottom", "reinit_bottom", "duplicate"], \
             f"initialization mode {strategy} not implemented"
+        duplicate = "duplicate" in strategy
         bottom = "bottom" in strategy
-        for _ in range(n_add):
-            new_layer = deepcopy(self.layers[0 if bottom else -1])
-            if "reinit" in strategy:
-                new_layer.apply(function)
-            new_layers.append(new_layer)
-        if bottom:
-            # not as elegant as extending the end but we have to add modules one by one at the start
-            # the count i is to make sure they're in the same order in new_layers and self.layers
-            for i, layer in enumerate(new_layers):
-                self.layers.insert(i, layer)
+        new_layers = nn.ModuleList([])
+
+        if duplicate:
+            assert n_add % len(self.layers) == 0, \
+                f"duplicating the network requires the number of extra layers {n_add} " \
+                f"to be an integer nultiple of previous length {len(self.layers)}"
+            factor = n_add // len(self.layers)
+            # we append them in the order they'll be found in the network later
+            for layer in self.layers:
+                for _ in range(factor):
+                    new_layers.append(deepcopy(layer))
+            # we interleave the new layers on top of the layer they duplicate
+            positions = [i for i in range(len(self.layers) + n_add) if i % len(self.layers) != 0]
+            for i, new_layer in enumerate(new_layers):
+                self.layers.insert(positions[i], new_layer)
+
         else:
-            self.layers.extend(new_layers)
+            for _ in range(n_add):
+                new_layer = deepcopy(self.layers[0 if bottom else -1])
+                if "reinit" in strategy:
+                    new_layer.apply(function)
+                new_layers.append(new_layer)
+            if bottom:
+                # not as elegant as extending the end but we have to add modules one by one at the start
+                # the count i is to make sure they're in the same order in new_layers and self.layers
+                for i, layer in enumerate(new_layers):
+                    self.layers.insert(i, layer)
+            else:
+                self.layers.extend(new_layers)
+
         self.n_layer += n_add
         return new_layers
 
