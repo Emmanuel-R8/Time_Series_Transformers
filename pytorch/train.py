@@ -227,7 +227,8 @@ def train(model, optimizers, schedulers):
         parent_model = model
     optimizer, optimizer_sparse = optimizers
     scheduler, scheduler_sparse = schedulers
-    global train_step, train_loss, best_val_loss, eval_start_time, log_start_time
+    global train_step, best_val_loss, eval_start_time, log_start_time
+    train_losses = []
     model.train()
     if args.batch_chunk > 1:
         mems = [tuple() for _ in range(args.batch_chunk)]
@@ -249,7 +250,7 @@ def train(model, optimizers, schedulers):
                     optimizer.backward(loss)
                 else:
                     loss.backward()
-                train_loss += loss.float().item()
+                train_losses.append(loss.float().item())
         else:
             ret = model(data, target, *mems)
             loss, mems = ret[0], ret[1:]
@@ -258,7 +259,7 @@ def train(model, optimizers, schedulers):
                 optimizer.backward(loss)
             else:
                 loss.backward()
-            train_loss += loss.float().item()
+            train_losses.append(loss.float().item())
 
         if args.fp16:
             optimizer.clip_master_grads(args.clip)
@@ -296,7 +297,7 @@ def train(model, optimizers, schedulers):
             scheduler.step(train_step)
 
         if parent_model.training_steps % args.log_interval == 0:
-            cur_loss = train_loss / args.log_interval
+            cur_loss = np.mean(train_losses)
             elapsed = time.time() - log_start_time
             log_str = '| epoch {:3d} step {:>8d} | {:>6d} batches | lr {:.3g} ' \
                       '| ms/batch {:5.2f} | loss {:5.2f}'.format(
@@ -310,7 +311,7 @@ def train(model, optimizers, schedulers):
             if args.wandb:
                 wandb.log({"train_loss": cur_loss, "learning rate": optimizer.param_groups[0]['lr']},
                           step=parent_model.training_steps)
-            train_loss = 0
+            train_losses = []
             log_start_time = time.time()
 
         if parent_model.training_steps % args.eval_interval == 0:
@@ -594,7 +595,6 @@ if __name__ == "__main__":
         train_step = 0
     else:
         train_step = model.training_steps
-    train_loss = 0
     best_val_loss = None
     # Reload previous step number in case of args.restart
     if train_step > 0:
