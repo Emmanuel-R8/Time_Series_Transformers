@@ -541,6 +541,8 @@ if __name__ == "__main__":
             model = model.float()
         model.apply(update_dropout)
         model.apply(update_dropatt)
+        if args.reset_lr:
+            model.training_steps = 0
     else:
         model = MemTransformerLM(ntokens, args.n_layer, args.n_head, args.d_model,
                                  args.d_head, args.d_inner, args.dropout, args.dropatt,

@@ -149,3 +149,5 @@ parser.add_argument('--log_first_epochs', type=int, default=0,
                     help='number of first epochs to log')
 parser.add_argument('--restart_from', type=int, default=None,
                     help="restart from specific epoch checkpoint")
+parser.add_argument('--reset_lr', action="store_true",
+                    help="reset learning schedule to start")
