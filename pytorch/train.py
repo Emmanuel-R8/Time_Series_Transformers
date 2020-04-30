@@ -203,11 +203,11 @@ def evaluate(eval_iter, model):
     return total_loss / total_len
 
 
-def log_val(val_loss):
+def log_val(val_loss, step):
     logging('-' * 100)
     log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
               '| valid loss {:5.2f}'.format(
-        train_step // args.eval_interval, train_step,
+        step // args.eval_interval, step,
         (time.time() - eval_start_time), val_loss)
     if args.dataset in ['enwik8', 'text8']:
         log_str += ' | bpc {:9.5f}'.format(val_loss / math.log(2))
@@ -215,7 +215,7 @@ def log_val(val_loss):
         log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
     logging(log_str)
     if args.wandb:
-        wandb.log({"valid_loss": val_loss}, step=train_step)
+        wandb.log({"valid_loss": val_loss}, step=step)
     logging('-' * 100)
 
 
@@ -295,12 +295,12 @@ def train(model, optimizers, schedulers):
         elif args.scheduler == 'inv_sqrt':
             scheduler.step(train_step)
 
-        if train_step % args.log_interval == 0:
+        if parent_model.training_steps % args.log_interval == 0:
             cur_loss = train_loss / args.log_interval
             elapsed = time.time() - log_start_time
             log_str = '| epoch {:3d} step {:>8d} | {:>6d} batches | lr {:.3g} ' \
                       '| ms/batch {:5.2f} | loss {:5.2f}'.format(
-                epoch, train_step, batch + 1, optimizer.param_groups[0]['lr'],
+                epoch, parent_model.training_steps, batch + 1, optimizer.param_groups[0]['lr'],
                                    elapsed * 1000 / args.log_interval, cur_loss)
             if args.dataset in ['enwik8', 'text8']:
                 log_str += ' | bpc {:9.5f}'.format(cur_loss / math.log(2))
@@ -308,13 +308,14 @@ def train(model, optimizers, schedulers):
                 log_str += ' | ppl {:9.3f}'.format(math.exp(cur_loss))
             logging(log_str)
             if args.wandb:
-                wandb.log({"train_loss": cur_loss, "learning rate": optimizer.param_groups[0]['lr']}, step=train_step)
+                wandb.log({"train_loss": cur_loss, "learning rate": optimizer.param_groups[0]['lr']},
+                          step=parent_model.training_steps)
             train_loss = 0
             log_start_time = time.time()
 
-        if train_step % args.eval_interval == 0:
+        if parent_model.training_steps % args.eval_interval == 0:
             val_loss = evaluate(va_iter, model)
-            log_val(val_loss)
+            log_val(val_loss, step=parent_model.training_steps)
             # Save the model if the validation loss is the best we've seen so far.
             if not best_val_loss or val_loss < best_val_loss:
                 if not args.debug:
@@ -332,7 +333,7 @@ def train(model, optimizers, schedulers):
 
             eval_start_time = time.time()
 
-        if train_step == args.max_step:
+        if parent_model.training_steps == args.max_step:
             break
 
 
@@ -347,7 +348,7 @@ def expand_model(strategy, integration, integration_length, n_add, model, optimi
     # pre-expansion validation
     logging(f"evaluating before expanding")
     val_loss = evaluate(va_iter, model)
-    log_val(val_loss)
+    log_val(val_loss, step=model.training_steps)
     # infer example logits for reverse distillation
     if "reverse_distil" in integration:
         first_logits = get_original_batches(model, tr_iter, integration_length)
@@ -370,7 +371,7 @@ def expand_model(strategy, integration, integration_length, n_add, model, optimi
     # post-expansion validation
     logging(f"reevaluating")
     val_loss = evaluate(va_iter, model)
-    log_val(val_loss)
+    log_val(val_loss, step=model.training_steps)
 
 
 # reverse distillation util
@@ -541,8 +542,6 @@ if __name__ == "__main__":
             model = model.float()
         model.apply(update_dropout)
         model.apply(update_dropatt)
-        if args.reset_lr:
-            model.training_steps = 0
     else:
         model = MemTransformerLM(ntokens, args.n_layer, args.n_head, args.d_model,
                                  args.d_head, args.d_inner, args.dropout, args.dropatt,
@@ -587,7 +586,11 @@ if __name__ == "__main__":
     ###############################################################################
 
     # Loop over epochs.
-    train_step = model.training_steps
+    if args.reset_lr:
+        # then they're different and we use train_step only for the new lr scheduling
+        train_step = 0
+    else:
+        train_step = model.training_steps
     train_loss = 0
     best_val_loss = None
     # Reload previous step number in case of args.restart
