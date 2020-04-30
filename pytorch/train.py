@@ -320,7 +320,7 @@ def train(model, optimizers, schedulers):
             if not best_val_loss or val_loss < best_val_loss:
                 if not args.debug:
                     with open(os.path.join(args.work_dir, 'model.pt'), 'wb') as f:
-                        torch.save(model, f)
+                        torch.save(parent_model, f)
                     with open(os.path.join(args.work_dir, 'optimizer.pt'), 'wb') as f:
                         torch.save(optimizer.state_dict(), f)
                 best_val_loss = val_loss
@@ -538,6 +538,9 @@ if __name__ == "__main__":
         logging(f"reloading {model_file_name}")
         with open(model_file_name, 'rb') as f:
             model = torch.load(f)
+        # backwards compatibility with older saves
+        if isinstance(model, nn.DataParallel):
+            model = model.module
         if not args.fp16:
             model = model.float()
         model.apply(update_dropout)
