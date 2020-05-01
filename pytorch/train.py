@@ -593,6 +593,9 @@ if __name__ == "__main__":
     if args.reset_lr:
         # then they're different and we use train_step only for the new lr scheduling
         train_step = 0
+        optimizer.defaults["lr"] = args.lr
+        for param_group in optimizer.param_groups:
+            param_group["lr"] = args.lr
     else:
         train_step = model.training_steps
     best_val_loss = None
