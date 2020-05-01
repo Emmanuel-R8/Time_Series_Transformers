@@ -296,12 +296,12 @@ def train(model, optimizers, schedulers):
         elif args.scheduler == 'inv_sqrt':
             scheduler.step(train_step)
 
-        if parent_model.training_steps % args.log_interval == 0:
+        if train_step % args.log_interval == 0:
             cur_loss = np.mean(train_losses)
             elapsed = time.time() - log_start_time
             log_str = '| epoch {:3d} step {:>8d} | {:>6d} batches | lr {:.3g} ' \
                       '| ms/batch {:5.2f} | loss {:5.2f}'.format(
-                epoch, parent_model.training_steps, batch + 1, optimizer.param_groups[0]['lr'],
+                epoch, train_step, batch + 1, optimizer.param_groups[0]['lr'],
                                    elapsed * 1000 / args.log_interval, cur_loss)
             if args.dataset in ['enwik8', 'text8']:
                 log_str += ' | bpc {:9.5f}'.format(cur_loss / math.log(2))
@@ -310,13 +310,13 @@ def train(model, optimizers, schedulers):
             logging(log_str)
             if args.wandb:
                 wandb.log({"train_loss": cur_loss, "learning rate": optimizer.param_groups[0]['lr']},
-                          step=parent_model.training_steps)
+                          step=train_step)
             train_losses = []
             log_start_time = time.time()
 
-        if parent_model.training_steps % args.eval_interval == 0:
+        if train_step % args.eval_interval == 0:
             val_loss = evaluate(va_iter, model)
-            log_val(val_loss, step=parent_model.training_steps)
+            log_val(val_loss, step=train_step)
             # Save the model if the validation loss is the best we've seen so far.
             if not best_val_loss or val_loss < best_val_loss:
                 if not args.debug:
@@ -334,7 +334,7 @@ def train(model, optimizers, schedulers):
 
             eval_start_time = time.time()
 
-        if parent_model.training_steps == args.max_step:
+        if train_step == args.max_step:
             break
 
 
