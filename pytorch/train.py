@@ -338,7 +338,7 @@ def train(model, optimizers, schedulers):
             break
 
 
-def expand_model(strategy, integration, integration_length, n_add, model, optimizers, schedulers, tr_iter, va_iter):
+def expand_model(strategy, integration, integration_length, n_add, model, optimizers, schedulers, tr_iter, va_iter, step):
     optimizer, _ = optimizers
     scheduler, _ = schedulers
     if integration:
@@ -349,7 +349,7 @@ def expand_model(strategy, integration, integration_length, n_add, model, optimi
     # pre-expansion validation
     logging(f"evaluating before expanding")
     val_loss = evaluate(va_iter, model)
-    log_val(val_loss, step=model.training_steps)
+    log_val(val_loss, step=step)
     # infer example logits for reverse distillation
     if "reverse_distil" in integration:
         first_logits = get_original_batches(model, tr_iter, integration_length)
@@ -372,7 +372,7 @@ def expand_model(strategy, integration, integration_length, n_add, model, optimi
     # post-expansion validation
     logging(f"reevaluating")
     val_loss = evaluate(va_iter, model)
-    log_val(val_loss, step=model.training_steps)
+    log_val(val_loss, step=step)
 
 
 # reverse distillation util
@@ -615,7 +615,7 @@ if __name__ == "__main__":
             if args.expand and str(epoch - 1) in args.expansion_dict:
                 n_add = int(args.expansion_dict[str(epoch - 1)])
                 expand_model(args.expand, args.integration, args.integration_length,
-                             n_add, model, optimizers, schedulers, tr_iter, va_iter)
+                             n_add, model, optimizers, schedulers, tr_iter, va_iter, train_step)
             train(para_model, optimizers, schedulers)
             if train_step >= args.max_step:
                 logging('-' * 100)
