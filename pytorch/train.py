@@ -596,6 +596,8 @@ if __name__ == "__main__":
         optimizer.defaults["lr"] = args.lr
         for param_group in optimizer.param_groups:
             param_group["lr"] = args.lr
+            param_group["initial_lr"] = args.lr
+        scheduler.base_lrs = [args.lr] * len(scheduler.base_lrs)
     else:
         train_step = model.training_steps
     best_val_loss = None
