@@ -117,7 +117,14 @@ def build_optimizer(model, reload=False):
         if os.path.exists(os.path.join(args.restart_dir, optim_name)):
             with open(os.path.join(args.restart_dir, optim_name), 'rb') as optim_file:
                 opt_state_dict = torch.load(optim_file)
-                optimizer.load_state_dict(opt_state_dict)
+                try:
+                    optimizer.load_state_dict(opt_state_dict)
+                # in case the optimizer param groups aren't the same shape, merge them
+                except:
+                    opt_state_dict["param_groups"][0]["params"] \
+                        = [param for param_group in opt_state_dict["param_groups"] for param in param_group["params"]]
+                    opt_state_dict["param_groups"] = [opt_state_dict["param_groups"][0]]
+                    optimizer.load_state_dict(opt_state_dict)
         else:
             logging('Optimizer was not saved. Start from scratch.')
 
