@@ -8,6 +8,7 @@ import torch.nn.functional as F
 sys.path.append('utils')
 from proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
 from log_uniform_sampler import LogUniformSampler, sample_logits
+from torch_utils import repeat_parameter, expand_qkv
 
 
 class PositionalEmbedding(nn.Module):
@@ -27,6 +28,17 @@ class PositionalEmbedding(nn.Module):
             return pos_emb[:, None, :].expand(-1, bsz, -1)
         else:
             return pos_emb[:, None, :]
+
+    def widen(self, ratio, change_freq=False):
+        if change_freq:
+            self.demb *= ratio
+            inv_freq = 1 / (10000 ** (torch.arange(0.0, self.demb, 2.0) / self.demb))
+        else:
+            inv_freq = 1 / (10000 ** (torch.arange(0.0, self.demb, 2.0) / self.demb))
+            inv_freq = inv_freq.repeat(ratio)
+            self.demb *= ratio
+        inv_freq = inv_freq.to(self.inv_freq.device)
+        self.register_buffer('inv_freq', inv_freq)
 
 
 class PositionwiseFF(nn.Module):
@@ -63,6 +75,22 @@ class PositionwiseFF(nn.Module):
             output = self.layer_norm(inp + core_out)
 
         return output
+
+    def add_heads(self, ratio, strategy="duplicate", function=None, expand_inner=True):
+        repeat_parameter(self.layer_norm.weight, ratio)
+        repeat_parameter(self.layer_norm.bias, ratio)
+        self.layer_norm.normalized_shape = tuple((size * ratio for size in self.layer_norm.normalized_shape))
+        self.d_model *= ratio
+        if expand_inner:
+            self.d_inner *= ratio
+            for layer in self.CoreNet:
+                if isinstance(layer, nn.Linear):
+                    repeat_parameter(layer.weight, ratio, ratio)
+                    repeat_parameter(layer.bias, ratio)
+        else:
+            repeat_parameter(self.CoreNet[0].weight, 1, ratio)
+            repeat_parameter(self.CoreNet[2].weight, ratio, 1)
+            repeat_parameter(self.CoreNet[2].bias, ratio)
 
 
 class MultiHeadAttn(nn.Module):
@@ -293,6 +321,25 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
 
         return output
 
+    def add_heads(self, ratio, strategy="duplicate", function=None):
+        self.n_head *= ratio
+        self.d_model *= ratio
+
+        # r_net
+        repeat_parameter(self.r_net.weight, ratio, ratio)
+        # r_w_bias
+        repeat_parameter(self.r_w_bias, ratio, 1)
+        # r_r_bias
+        repeat_parameter(self.r_r_bias, ratio, 1)
+        # qkv_net: requires its own helper function as it divides its inputs into 3 parts
+        expand_qkv(self.qkv_net, ratio)
+        # layer_norm
+        repeat_parameter(self.layer_norm.weight, ratio)
+        repeat_parameter(self.layer_norm.bias, ratio)
+        self.layer_norm.normalized_shape = tuple((size * ratio for size in self.layer_norm.normalized_shape))
+        # o_net
+        repeat_parameter(self.o_net.weight, ratio, ratio)
+
 
 class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
     def __init__(self, *args, **kwargs):
@@ -433,6 +480,10 @@ class RelPartialLearnableDecoderLayer(nn.Module):
 
         return output
 
+    def add_heads(self, ratio, strategy="duplicate", function=None, expand_inner=True):
+        self.dec_attn.add_heads(ratio, strategy, function)
+        self.pos_ff.add_heads(ratio, strategy, function, expand_inner)
+
 
 class AdaptiveEmbedding(nn.Module):
     def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1,
@@ -496,6 +547,20 @@ class AdaptiveEmbedding(nn.Module):
 
         return embed
 
+    def widen(self, ratio, strategy="duplicate", function=None, tied_weight=True, tied_projs=None):
+        self.d_embed *= ratio
+        self.d_proj *= ratio
+        # EXPAND SCALE ?
+        # self.emb_scale = self.d_proj ** 0.5
+        if not tied_weight:
+            for emb_layer in self.emb_layers:
+                repeat_parameter(emb_layer.weight, 1, ratio)
+        if tied_projs is None:
+            tied_projs = [False] + [True] * len(cutoffs)
+        for i, tied_proj in enumerate(tied_projs):
+            if not tied_proj and i < len(self.emb_projs):
+                repeat_parameter(self.emb_projs[i])
+
 
 class MemTransformerLM(nn.Module):
     def __init__(self, n_token, n_layer, n_head, d_model, d_head, d_inner,
@@ -517,6 +582,8 @@ class MemTransformerLM(nn.Module):
         self.d_inner = d_inner
         self.n_layer = n_layer
         self.attn_type = attn_type
+        self.tie_weight = tie_weight
+        self.tie_projs = tie_projs
 
         self.drop = nn.Dropout(dropout)
         self.dropout_p = dropout
@@ -564,7 +631,6 @@ class MemTransformerLM(nn.Module):
             self.out_layer = nn.Linear(d_model, n_token)
             if tie_weight:
                 self.out_layer.weight = self.word_emb.weight
-            self.tie_weight = tie_weight
             self.sampler = LogUniformSampler(n_token, sample_softmax)
 
         # use adaptive softmax (including standard softmax)
@@ -586,8 +652,10 @@ class MemTransformerLM(nn.Module):
         self.same_length = same_length
         self.clamp_len = clamp_len
 
-    def backward_compatible(self):
+    def backward_compatible(self, tie_weight, tie_projs):
         self.sample_softmax = -1
+        self.tie_weight = tie_weight
+        self.tie_projs = tie_projs
 
     def _create_params(self):
         if self.attn_type == 0:  # default attention
@@ -740,6 +808,31 @@ class MemTransformerLM(nn.Module):
 
         return core_out, new_mems
 
+    def forward(self, data, target, *mems):
+        # nn.DataParallel does not allow size(0) tensors to be broadcasted.
+        # So, have to initialize size(0) mems inside the model forward.
+        # Moreover, have to return new_mems to allow nn.DataParallel to piece
+        # them together.
+        if not mems: mems = self.init_mems()
+
+        tgt_len = target.size(0)
+        hidden, new_mems = self._forward(data, mems=mems)
+
+        pred_hid = hidden[-tgt_len:]
+        if self.sample_softmax > 0 and self.training:
+            assert self.tie_weight
+            logit = sample_logits(self.word_emb,
+                                  self.out_layer.bias, target, pred_hid, self.sampler)
+            loss = -F.log_softmax(logit, -1)[:, :, 0]
+        else:
+            loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.reshape(-1))
+            loss = loss.view(tgt_len, -1)
+
+        if new_mems is None:
+            return [loss]
+        else:
+            return [loss] + new_mems
+
     def expand_layers(self, n_add, strategy="repeat", function=None):
         assert self.attn_type == 0, f"only works with default attention mode, not mode {self.attn}"
         assert strategy in ["repeat", "reinit", "repeat_bottom", "reinit_bottom", "duplicate"], \
@@ -779,30 +872,28 @@ class MemTransformerLM(nn.Module):
         self.n_layer += n_add
         return new_layers
 
-    def forward(self, data, target, *mems):
-        # nn.DataParallel does not allow size(0) tensors to be broadcasted.
-        # So, have to initialize size(0) mems inside the model forward.
-        # Moreover, have to return new_mems to allow nn.DataParallel to piece
-        # them together.
-        if not mems: mems = self.init_mems()
+    def add_heads(self, ratio, strategy="duplicate", function=None,
+                  expand_inner=True, expand_embeddings=True, change_freq=False):
+        assert self.attn_type == 0, f"only works with default attention mode, not mode {self.attn}"
+        assert strategy in ["reinit", "duplicate"], \
+            f"initialization mode {strategy} not implemented"
 
-        tgt_len = target.size(0)
-        hidden, new_mems = self._forward(data, mems=mems)
+        self.d_model *= ratio
+        self.n_head *= ratio
+        if expand_inner:
+            self.d_inner *= ratio
+        if expand_embeddings:
+            self.d_embed *= ratio
 
-        pred_hid = hidden[-tgt_len:]
-        if self.sample_softmax > 0 and self.training:
-            assert self.tie_weight
-            logit = sample_logits(self.word_emb,
-                                  self.out_layer.bias, target, pred_hid, self.sampler)
-            loss = -F.log_softmax(logit, -1)[:, :, 0]
-        else:
-            loss = self.crit(pred_hid.view(-1, pred_hid.size(-1)), target.reshape(-1))
-            loss = loss.view(tgt_len, -1)
+        for layer in self.layers:
+            layer.add_heads(ratio, strategy, function, expand_inner)
 
-        if new_mems is None:
-            return [loss]
-        else:
-            return [loss] + new_mems
+        if expand_embeddings:
+            self.crit.widen(ratio, strategy, function)
+            self.word_emb.widen(ratio, strategy, function, self.tie_weight, self.tie_projs)
+            self.pos_emb.widen(ratio, change_freq)
+
+        return self.layers
 
 
 if __name__ == '__main__':

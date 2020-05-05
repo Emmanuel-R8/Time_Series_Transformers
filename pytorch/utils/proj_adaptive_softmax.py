@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch_utils import repeat_parameter
 
 CUDA_MAJOR = int(torch.version.cuda.split('.')[0])
 CUDA_MINOR = int(torch.version.cuda.split('.')[1])
@@ -149,3 +150,14 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                 offset += logprob_i.size(0)
 
         return nll
+
+    def widen(self, ratio, strategy="duplicate", function=None):
+        self.d_embed *= 2
+        self.d_proj *= 2
+
+        repeat_parameter(self.cluster_weight, 1, ratio)
+        for out_proj in self.out_projs:
+            if out_proj is not None:
+                repeat_parameter(out_proj, ratio, ratio)
+        for out_layer in self.out_layers:
+            repeat_parameter(out_layer.weight, 1, ratio)

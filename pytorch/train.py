@@ -121,6 +121,7 @@ def build_optimizer(model, reload=False):
                     optimizer.load_state_dict(opt_state_dict)
                 # in case the optimizer param groups aren't the same shape, merge them
                 except:
+                    logging("merging optimizer param groups")
                     opt_state_dict["param_groups"][0]["params"] \
                         = [param for param_group in opt_state_dict["param_groups"] for param in param_group["params"]]
                     opt_state_dict["param_groups"] = [opt_state_dict["param_groups"][0]]
@@ -345,7 +346,8 @@ def train(model, optimizers, schedulers):
             break
 
 
-def expand_model(strategy, integration, integration_length, n_add, model, optimizers, schedulers, tr_iter, va_iter, step):
+def expand_model(strategy, integration, integration_length, n_add, model: MemTransformerLM, optimizers, schedulers,
+                 tr_iter, va_iter, step):
     optimizer, _ = optimizers
     scheduler, _ = schedulers
     if integration:
@@ -376,6 +378,26 @@ def expand_model(strategy, integration, integration_length, n_add, model, optimi
             for parameter in param_group['params']:
                 parameter.requires_grad = False
         model.freeze_countdown = integration_length
+    # post-expansion validation
+    logging(f"reevaluating")
+    val_loss = evaluate(va_iter, model)
+    log_val(val_loss, step=step)
+
+
+def widen_model(strategy, ratio, model: MemTransformerLM, optimizers, va_iter, step):
+    optimizer, _ = optimizers
+    # pre-expansion validation
+    logging(f"evaluating before widening")
+    # debug
+    # val_loss = evaluate(va_iter, model)
+    # log_val(val_loss, step=step)
+    # infer example logits for reverse distillation
+    # expansion
+    logging(f"adding {ratio} layers before starting epoch {epoch} with method {strategy}")
+    model.add_heads(ratio, strategy=strategy, function=initialization_func)
+    # optimizer update
+
+    # training loop for reverse distillation
     # post-expansion validation
     logging(f"reevaluating")
     val_loss = evaluate(va_iter, model)
@@ -549,6 +571,7 @@ if __name__ == "__main__":
         # backwards compatibility with older saves
         if isinstance(model, nn.DataParallel):
             model = model.module
+        model.backward_compatible(tie_weight=args.tied, tie_projs=tie_projs)
         if not args.fp16:
             model = model.float()
         model.apply(update_dropout)
@@ -628,6 +651,9 @@ if __name__ == "__main__":
                 n_add = int(args.expansion_dict[str(epoch - 1)])
                 expand_model(args.expand, args.integration, args.integration_length,
                              n_add, model, optimizers, schedulers, tr_iter, va_iter, train_step)
+            if args.widen and str(epoch - 1) in args.widen_dict:
+                ratio = int(args.widen_dict[str(epoch - 1)])
+                widen_model(args.widen, ratio, model, optimizers, va_iter, train_step)
             train(para_model, optimizers, schedulers)
             if train_step >= args.max_step:
                 logging('-' * 100)
