@@ -384,6 +384,14 @@ def expand_model(strategy, integration, integration_length, n_add, model: MemTra
     log_val(val_loss, step=step)
 
 
+def expand_state(param, state):
+    if param.shape != state.shape:
+        ratios = [param.shape[i] // state.shape[i] for i in range(len(param.shape))]
+        return state.repeat(*ratios)
+    else:
+        return state
+
+
 def widen_model(strategy, ratio, model: MemTransformerLM, optimizers, va_iter, step):
     optimizer, _ = optimizers
     # pre-expansion validation
@@ -396,7 +404,10 @@ def widen_model(strategy, ratio, model: MemTransformerLM, optimizers, va_iter, s
     logging(f"adding {ratio} layers before starting epoch {epoch} with method {strategy}")
     model.add_heads(ratio, strategy=strategy, function=initialization_func)
     # optimizer update
-
+    for param, states in optimizer.state.items():
+        if isinstance(param, nn.Parameter):
+            states["exp_avg"] = expand_state(param, states["exp_avg"])
+            states["exp_avg_sq"] = expand_state(param, states["exp_avg_sq"])
     # training loop for reverse distillation
     # post-expansion validation
     logging(f"reevaluating")
