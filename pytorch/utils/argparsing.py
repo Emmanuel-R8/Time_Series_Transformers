@@ -145,7 +145,7 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
                     help='Use dynamic loss scaling.  If supplied, this argument'
                          ' supersedes --static-loss-scale.')
 
-parser.add_argument('--wandb', action='store_true',
+parser.add_argument('--wandb', type=str, default=None,
                     help='Use weights and biases logging.')
 
 parser.add_argument('--log_first_epochs', type=int, default=0,

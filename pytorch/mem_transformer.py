@@ -573,6 +573,7 @@ class MemTransformerLM(nn.Module):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
         self.training_steps = 0
+        self.compute = 0
 
         d_embed = d_model if d_embed is None else d_embed
         self.d_embed = d_embed

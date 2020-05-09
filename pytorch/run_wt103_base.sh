@@ -23,7 +23,7 @@ if [[ $1 == 'train' ]]; then
         --eval_tgt_len 150 \
         --batch_size 60 \
         --batch_chunk 1 \
-        --wandb
+        --wandb salamander
         ${@:2}
 elif [[ $1 == 'eval' ]]; then
     echo 'Run evaluation...'

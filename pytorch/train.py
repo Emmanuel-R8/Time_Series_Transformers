@@ -18,6 +18,7 @@ from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel
 from utils.initialization import weights_init
 from utils.argparsing import parser
+from torch_utils import non_emb_param_count, openai_compute
 
 args = parser.parse_args()
 args.tied = not args.not_tied
@@ -211,7 +212,7 @@ def evaluate(eval_iter, model):
     return total_loss / total_len
 
 
-def log_val(val_loss, step):
+def log_val(val_loss, step, compute):
     logging('-' * 100)
     log_str = '| Eval {:3d} at step {:>8d} | time: {:5.2f}s ' \
               '| valid loss {:5.2f}'.format(
@@ -223,7 +224,7 @@ def log_val(val_loss, step):
         log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
     logging(log_str)
     if args.wandb:
-        wandb.log({"valid_loss": val_loss}, step=step)
+        wandb.log({"valid_loss": val_loss, "global_step": compute}, step=step)
     logging('-' * 100)
 
 
@@ -275,6 +276,7 @@ def train(model, optimizers, schedulers):
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
         optimizer.step()
+        parent_model.compute += openai_compute(non_emb_param_count(parent_model, ntokens), data.numel(), 1)
         if args.sample_softmax > 0:
             optimizer_sparse.step()
 
@@ -324,7 +326,7 @@ def train(model, optimizers, schedulers):
 
         if train_step % args.eval_interval == 0:
             val_loss = evaluate(va_iter, model)
-            log_val(val_loss, step=train_step)
+            log_val(val_loss, step=train_step, compute=parent_model.compute)
             # Save the model if the validation loss is the best we've seen so far.
             if not best_val_loss or val_loss < best_val_loss:
                 if not args.debug:
@@ -358,7 +360,7 @@ def expand_model(strategy, integration, integration_length, n_add, model: MemTra
     # pre-expansion validation
     logging(f"evaluating before expanding")
     val_loss = evaluate(va_iter, model)
-    log_val(val_loss, step=step)
+    log_val(val_loss, step=step, compute=model.compute)
     # infer example logits for reverse distillation
     if "reverse_distil" in integration:
         first_logits = get_original_batches(model, tr_iter, integration_length)
@@ -381,7 +383,7 @@ def expand_model(strategy, integration, integration_length, n_add, model: MemTra
     # post-expansion validation
     logging(f"reevaluating")
     val_loss = evaluate(va_iter, model)
-    log_val(val_loss, step=step)
+    log_val(val_loss, step=step, compute=model.compute)
 
 
 def expand_state(param, state):
@@ -397,8 +399,8 @@ def widen_model(strategy, ratio, model: MemTransformerLM, optimizers, va_iter, s
     # pre-expansion validation
     logging(f"evaluating before widening")
     # debug
-    # val_loss = evaluate(va_iter, model)
-    # log_val(val_loss, step=step)
+    val_loss = evaluate(va_iter, model)
+    log_val(val_loss, compute=model.compute, step=step)
     # infer example logits for reverse distillation
     # expansion
     logging(f"adding {ratio} layers before starting epoch {epoch} with method {strategy}")
@@ -412,7 +414,7 @@ def widen_model(strategy, ratio, model: MemTransformerLM, optimizers, va_iter, s
     # post-expansion validation
     logging(f"reevaluating")
     val_loss = evaluate(va_iter, model)
-    log_val(val_loss, step=step)
+    log_val(val_loss, step=step, compute=model.compute)
 
 
 # reverse distillation util
@@ -532,7 +534,7 @@ if __name__ == "__main__":
                          "expansion_style": args.expand,
                          "expansion_times": args.expansion_dict
                          }
-        wandb.init(project="salamander", config=logged_params)
+        wandb.init(project=args.wandb, config=logged_params)
 
     ###############################################################################
     # Load data
@@ -600,7 +602,7 @@ if __name__ == "__main__":
         # model.word_emb.apply(initialization_func)
         # ensure embedding init is not overridden by out_layer in case of weight sharing
     args.n_all_param = sum([p.nelement() for p in model.parameters()])
-    args.n_nonemb_param = sum([p.nelement() for p in model.layers.parameters()])
+    args.n_nonemb_param = non_emb_param_count(model, ntokens)
 
     logging('=' * 100)
     for k, v in args.__dict__.items():
@@ -683,7 +685,7 @@ if __name__ == "__main__":
         logging('-' * 100)
         logging('Exiting from training early')
 
-    # Load the bestzdel.
+    # Load the best model.
     with open(os.path.join(args.work_dir, 'model.pt'), 'rb') as f:
         model = torch.load(f)
     para_model = model.to(device)
@@ -697,5 +699,5 @@ if __name__ == "__main__":
     else:
         logging('| End of training | test loss {:5.2f} | test ppl {:9.3f}'.format(
             test_loss, math.exp(test_loss)))
-    wandb.log({"test_loss": test_loss})
+    wandb.log({"test_loss": test_loss, "global_step": model.compute})
     logging('=' * 100)
