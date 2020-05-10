@@ -21,7 +21,7 @@ from torch_utils import non_emb_param_count, openai_compute
 
 from knockknock import slack_sender
 
-webhook_url = "https://hooks.slack.com/services/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"
+webhook_url = open("slack_webhook.txt").read()
 
 args = parser.parse_args()
 args.tied = not args.not_tied
