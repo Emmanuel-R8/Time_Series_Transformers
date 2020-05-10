@@ -4,11 +4,11 @@ python train.py \
     --data ../data/wikitext-103/ \
     --dataset wt103 \
     --adaptive \
-    --n_layer 4 \
-    --d_model 512 \
-    --n_head 8 \
-    --d_head 64 \
-    --d_inner 2100 \
+    --n_layer 2 \
+    --d_model 64 \
+    --n_head 4 \
+    --d_head 16 \
+    --d_inner 256 \
     --dropout 0.1 \
     --dropatt 0.0 \
     --optim adam \
@@ -20,5 +20,5 @@ python train.py \
     --eval_tgt_len 150 \
     --batch_size 60 \
     --batch_chunk 1 \
-    --wandb transfoxl-compute
+    --wandb transfoxl-compute \
     ${@:2}

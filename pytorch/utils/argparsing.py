@@ -147,6 +147,8 @@ parser.add_argument('--dynamic-loss-scale', action='store_true',
 
 parser.add_argument('--wandb', type=str, default=None,
                     help='Use weights and biases logging.')
+parser.add_argument('--knockknock', action="store_true",
+                    help='Use knockknock alerts')
 
 parser.add_argument('--log_first_epochs', type=int, default=0,
                     help='number of first epochs to log')

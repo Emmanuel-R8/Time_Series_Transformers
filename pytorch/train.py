@@ -7,7 +7,6 @@ from functools import partial
 import warnings
 
 import numpy as np
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -19,6 +18,10 @@ from utils.data_parallel import BalancedDataParallel
 from utils.initialization import weights_init
 from utils.argparsing import parser
 from torch_utils import non_emb_param_count, openai_compute
+
+from knockknock import slack_sender
+
+webhook_url = "https://hooks.slack.com/services/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"
 
 args = parser.parse_args()
 args.tied = not args.not_tied
@@ -228,7 +231,7 @@ def log_val(val_loss, step, compute):
     logging('-' * 100)
 
 
-def train(model, optimizers, schedulers):
+def epoch_loop(epoch, model, optimizers, schedulers):
     # Turn on training mode which enables dropout.
     if isinstance(model, nn.DataParallel):
         parent_model = model.module
@@ -348,8 +351,44 @@ def train(model, optimizers, schedulers):
             break
 
 
+def conditional_slack_sender(condition):
+
+    def conditioned(func):
+        if condition:
+            return slack_sender(webhook_url=webhook_url, channel="Teven")(func)
+        else:
+            return func
+
+    return conditioned
+
+
+@conditional_slack_sender(args.knockknock)
+def run_training():
+    for epoch in itertools.count(start=first_epoch):
+        # we check before the training loop; expanding at epoch 0 means before training (for debug purposes)
+        if args.expand and str(epoch - 1) in args.expansion_dict:
+            n_add = int(args.expansion_dict[str(epoch - 1)])
+            expand_model(args.expand, args.integration, args.integration_length,
+                         n_add, model, optimizers, schedulers, tr_iter, va_iter, epoch, train_step)
+        if args.widen and str(epoch - 1) in args.widen_dict:
+            ratio = int(args.widen_dict[str(epoch - 1)])
+            widen_model(args.widen, ratio, model, optimizers, va_iter, epoch, train_step)
+        epoch_loop(epoch, para_model, optimizers, schedulers)
+        if train_step >= args.max_step:
+            logging('-' * 100)
+            logging('End of training')
+            break
+        if not args.debug and args.log_first_epochs:
+            if epoch <= args.log_first_epochs:
+                logging(f"saving model at the end of epoch {epoch}")
+                with open(os.path.join(args.work_dir, f'model_{epoch}.pt'), 'wb') as f:
+                    torch.save(model, f)
+                with open(os.path.join(args.work_dir, f'optimizer_{epoch}.pt'), 'wb') as f:
+                    torch.save(optimizer.state_dict(), f)
+
+
 def expand_model(strategy, integration, integration_length, n_add, model: MemTransformerLM, optimizers, schedulers,
-                 tr_iter, va_iter, step):
+                 tr_iter, va_iter, epoch, step):
     optimizer, _ = optimizers
     scheduler, _ = schedulers
     if integration:
@@ -394,7 +433,7 @@ def expand_state(param, state):
         return state
 
 
-def widen_model(strategy, ratio, model: MemTransformerLM, optimizers, va_iter, step):
+def widen_model(strategy, ratio, model: MemTransformerLM, optimizers, va_iter, epoch, step):
     optimizer, _ = optimizers
     # pre-expansion validation
     logging(f"evaluating before widening")
@@ -452,9 +491,9 @@ def fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration)
         distil_optimizer, distil_optimizer_sparse = build_optimizer(model, reload=False)
     if args.cuda and args.fp16:
         distil_optimizer = FP16_Optimizer(distil_optimizer,
-                                   static_loss_scale=args.static_loss_scale,
-                                   dynamic_loss_scale=args.dynamic_loss_scale,
-                                   dynamic_loss_args={'init_scale': 2 ** 16})
+                                          static_loss_scale=args.static_loss_scale,
+                                          dynamic_loss_scale=args.dynamic_loss_scale,
+                                          dynamic_loss_args={'init_scale': 2 ** 16})
     model.train()
     if args.batch_chunk > 1:
         mems = [None for _ in range(args.batch_chunk)]
@@ -658,27 +697,7 @@ if __name__ == "__main__":
             print(f"restarting from epoch {first_epoch}")
         else:
             first_epoch = 1
-        for epoch in itertools.count(start=first_epoch):
-            # we check before the training loop; expanding at epoch 0 means before training (for debug purposes)
-            if args.expand and str(epoch - 1) in args.expansion_dict:
-                n_add = int(args.expansion_dict[str(epoch - 1)])
-                expand_model(args.expand, args.integration, args.integration_length,
-                             n_add, model, optimizers, schedulers, tr_iter, va_iter, train_step)
-            if args.widen and str(epoch - 1) in args.widen_dict:
-                ratio = int(args.widen_dict[str(epoch - 1)])
-                widen_model(args.widen, ratio, model, optimizers, va_iter, train_step)
-            train(para_model, optimizers, schedulers)
-            if train_step >= args.max_step:
-                logging('-' * 100)
-                logging('End of training')
-                break
-            if not args.debug and args.log_first_epochs:
-                if epoch <= args.log_first_epochs:
-                    logging(f"saving model at the end of epoch {epoch}")
-                    with open(os.path.join(args.work_dir, f'model_{epoch}.pt'), 'wb') as f:
-                        torch.save(model, f)
-                    with open(os.path.join(args.work_dir, f'optimizer_{epoch}.pt'), 'wb') as f:
-                        torch.save(optimizer.state_dict(), f)
+        run_training()
 
 
     except KeyboardInterrupt:
