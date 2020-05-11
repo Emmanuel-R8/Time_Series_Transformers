@@ -247,10 +247,10 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
 
         #### compute attention score
         rw_head_q = w_head_q + r_w_bias                                         # qlen x bsz x n_head x d_head
-        AC = torch.einsum('ibnd,jbnd->ijbn', (rw_head_q, w_head_k))             # qlen x klen x bsz x n_head
+        AC = torch.einsum('ibnd,jbnd->bnij', (rw_head_q, w_head_k))             # bsz x n_head x qlen x klen
 
         rr_head_q = w_head_q + r_r_bias
-        BD = torch.einsum('ibnd,jnd->ijbn', (rr_head_q, r_head_k))              # qlen x klen x bsz x n_head
+        BD = torch.einsum('ibnd,jnd->bnij', (rr_head_q, r_head_k))              # bsz x n_head x qlen x klen
         BD = self._rel_shift(BD)
 
         # [qlen x klen x bsz x n_head]
@@ -260,18 +260,16 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         #### compute attention probability
         if attn_mask is not None and attn_mask.any().item():
             if attn_mask.dim() == 2:
-                attn_score = attn_score.float().masked_fill(
-                    attn_mask[None,:,:,None], -float('inf')).type_as(attn_score)
+                attn_score.masked_fill_(attn_mask[None, None, :, :], -float('inf'))
             elif attn_mask.dim() == 3:
-                attn_score = attn_score.float().masked_fill(
-                    attn_mask[:,:,:,None], -float('inf')).type_as(attn_score)
+                attn_score.masked_fill_(attn_mask[:, None, :, :], -float('inf'))
 
-        # [qlen x klen x bsz x n_head]
-        attn_prob = F.softmax(attn_score, dim=1)
+        # [bsz x n_head x qlen x klen]
+        attn_prob = F.softmax(attn_score, dim=3)
         attn_prob = self.dropatt(attn_prob)
 
         #### compute attention vector
-        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, w_head_v))
+        attn_vec = torch.einsum('bnij,jbnd->ibnd', (attn_prob, w_head_v))
 
         # [qlen x bsz x n_head x d_head]
         attn_vec = attn_vec.contiguous().view(
