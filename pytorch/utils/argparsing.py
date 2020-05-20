@@ -118,8 +118,8 @@ parser.add_argument('--multi_gpu', action='store_true',
                     help='use multiple GPU')
 parser.add_argument('--gpu0_bsz', type=int, default=-1,
                     help='batch size on gpu 0')
-parser.add_argument('--fp16', action='store_true',
-                    help='Run in pseudo-fp16 mode (fp16 storage fp32 math).')
+parser.add_argument('--fp16', type=str, default=None, choices=["O1", "O2", "O0"],
+                    help='activate amp training with the chosen mode')
 
 parser.add_argument('--log-interval', type=int, default=200,
                     help='report interval')
@@ -138,12 +138,6 @@ parser.add_argument('--finetune_v2', action='store_true',
                     help='finetune v2')
 parser.add_argument('--finetune_v3', action='store_true',
                     help='finetune v3')
-parser.add_argument('--static-loss-scale', type=float, default=1,
-                    help='Static loss scale, positive power of 2 values can '
-                         'improve fp16 convergence.')
-parser.add_argument('--dynamic-loss-scale', action='store_true',
-                    help='Use dynamic loss scaling.  If supplied, this argument'
-                         ' supersedes --static-loss-scale.')
 
 parser.add_argument('--wandb', type=str, default=None,
                     help='Use weights and biases logging.')

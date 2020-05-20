@@ -36,7 +36,9 @@ if args.fp16:
         args.fp16 = False
     else:
         try:
-            from apex.fp16_utils import FP16_Optimizer
+            from apex import amp
+            if args.fp16 == "O1":
+                amp.register_half_function(torch, 'einsum')
         except:
             print('WARNING: apex not installed, ignoring --fp16 option')
             args.fp16 = False
@@ -247,6 +249,7 @@ def epoch_loop(epoch, model, optimizers, schedulers):
     else:
         mems = tuple()
     train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
+    start_time = time.time()
     for batch, (data, target, seq_len) in enumerate(train_iter):
         model.zero_grad()
         if args.batch_chunk > 1:
@@ -259,7 +262,8 @@ def epoch_loop(epoch, model, optimizers, schedulers):
                 loss, mems[i] = ret[0], ret[1:]
                 loss = loss.float().mean().type_as(loss) / args.batch_chunk
                 if args.fp16:
-                    optimizer.backward(loss)
+                    with amp.scale_loss(loss, optimizer) as scaled_loss:
+                        scaled_loss.backward()
                 else:
                     loss.backward()
                 train_losses.append(loss.float().item())
@@ -268,13 +272,14 @@ def epoch_loop(epoch, model, optimizers, schedulers):
             loss, mems = ret[0], ret[1:]
             loss = loss.float().mean().type_as(loss)
             if args.fp16:
-                optimizer.backward(loss)
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
             else:
                 loss.backward()
             train_losses.append(loss.float().item())
 
         if args.fp16:
-            optimizer.clip_master_grads(args.clip)
+            torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
         else:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
@@ -310,6 +315,7 @@ def epoch_loop(epoch, model, optimizers, schedulers):
             scheduler.step(train_step)
 
         if train_step % args.log_interval == 0:
+            print("{:e}".format(parent_model.compute * 24 * 3600 / (time.time() - start_time)))
             cur_loss = np.mean(train_losses)
             elapsed = time.time() - log_start_time
             log_str = '| epoch {:3d} step {:>8d} | {:>6d} batches | lr {:.3g} ' \
@@ -333,10 +339,19 @@ def epoch_loop(epoch, model, optimizers, schedulers):
             # Save the model if the validation loss is the best we've seen so far.
             if not best_val_loss or val_loss < best_val_loss:
                 if not args.debug:
-                    with open(os.path.join(args.work_dir, 'model.pt'), 'wb') as f:
-                        torch.save(parent_model, f)
-                    with open(os.path.join(args.work_dir, 'optimizer.pt'), 'wb') as f:
-                        torch.save(optimizer.state_dict(), f)
+                    if args.fp16:
+                        with open(os.path.join(args.work_dir, 'amp_checkpoint.pt'), 'wb') as f:
+                            checkpoint = {
+                                'model': model.state_dict(),
+                                'optimizer': optimizer.state_dict(),
+                                'amp': amp.state_dict()
+                            }
+                            torch.save(checkpoint, f)
+                    else:
+                        with open(os.path.join(args.work_dir, 'model.pt'), 'wb') as f:
+                            torch.save(parent_model, f)
+                        with open(os.path.join(args.work_dir, 'optimizer.pt'), 'wb') as f:
+                            torch.save(optimizer.state_dict(), f)
                 best_val_loss = val_loss
 
             # dev-performance based learning rate annealing
@@ -381,10 +396,19 @@ def run_training():
         if not args.debug and args.log_first_epochs:
             if epoch <= args.log_first_epochs:
                 logging(f"saving model at the end of epoch {epoch}")
-                with open(os.path.join(args.work_dir, f'model_{epoch}.pt'), 'wb') as f:
-                    torch.save(model, f)
-                with open(os.path.join(args.work_dir, f'optimizer_{epoch}.pt'), 'wb') as f:
-                    torch.save(optimizer.state_dict(), f)
+                if args.fp16:
+                    with open(os.path.join(args.work_dir, f'amp_checkpoint_{epoch}.pt'), 'wb') as f:
+                        checkpoint = {
+                            'model': model.state_dict(),
+                            'optimizer': optimizer.state_dict(),
+                            'amp': amp.state_dict()
+                        }
+                        torch.save(checkpoint, f)
+                else:
+                    with open(os.path.join(args.work_dir, f'model_{epoch}.pt'), 'wb') as f:
+                        torch.save(model, f)
+                    with open(os.path.join(args.work_dir, f'optimizer_{epoch}.pt'), 'wb') as f:
+                        torch.save(optimizer.state_dict(), f)
 
 
 def expand_model(strategy, integration, integration_length, n_add, model: MemTransformerLM, optimizers, schedulers,
@@ -490,10 +514,7 @@ def fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration)
     else:
         distil_optimizer, distil_optimizer_sparse = build_optimizer(model, reload=False)
     if args.cuda and args.fp16:
-        distil_optimizer = FP16_Optimizer(distil_optimizer,
-                                          static_loss_scale=args.static_loss_scale,
-                                          dynamic_loss_scale=args.dynamic_loss_scale,
-                                          dynamic_loss_args={'init_scale': 2 ** 16})
+        model, distil_optimizer = amp.initialize(model, distil_optimizer, opt_level=args.fp16)
     model.train()
     if args.batch_chunk > 1:
         mems = [None for _ in range(args.batch_chunk)]
@@ -512,7 +533,8 @@ def fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration)
                 target_logits = first_logits[i][batch].to(logits.device)
                 loss = mse_loss(logits, target_logits) / args.batch_chunk
                 if args.fp16:
-                    distil_optimizer.backward(loss)
+                    with amp.scale_loss(loss, distil_optimizer) as scaled_loss:
+                        scaled_loss.backward()
                 else:
                     loss.backward()
         else:
@@ -520,12 +542,13 @@ def fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration)
             target_logits = first_logits[batch].to(logits.device)
             loss = mse_loss(logits, target_logits)
             if args.fp16:
-                distil_optimizer.backward(loss)
+                with amp.scale_loss(loss, distil_optimizer) as scaled_loss:
+                    scaled_loss.backward()
             else:
                 loss.backward()
 
         if args.fp16:
-            distil_optimizer.clip_master_grads(args.clip)
+            torch.nn.utils.clip_grad_norm_(amp.master_params(distil_optimizer), args.clip)
         else:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
@@ -611,7 +634,7 @@ if __name__ == "__main__":
                                   init_range=args.init_range,
                                   init_std=args.init_std,
                                   proj_init_std=args.proj_init_std)
-    if args.restart:
+    if args.restart and not args.fp16:
         if args.restart_from is not None:
             model_name = f'model_{args.restart_from}.pt'
         else:
@@ -650,22 +673,25 @@ if __name__ == "__main__":
     logging('#params = {}'.format(args.n_all_param))
     logging('#non emb params = {}'.format(args.n_nonemb_param))
 
-    if args.fp16:
-        model = model.half()
-
     para_model = parallelize_model(model)
-    optimizers = build_optimizer(para_model, reload=args.restart)
+    optimizers = build_optimizer(para_model, reload=args.restart and not args.fp16)
     optimizer, optimizer_sparse = optimizers
     schedulers = build_scheduler(optimizers)
     scheduler, scheduler_sparse = schedulers
 
     if args.cuda and args.fp16:
-        # If args.dynamic_loss_scale is False, static_loss_scale will be used.
-        # If args.dynamic_loss_scale is True, it will take precedence over static_loss_scale.
-        optimizer = FP16_Optimizer(optimizer,
-                                   static_loss_scale=args.static_loss_scale,
-                                   dynamic_loss_scale=args.dynamic_loss_scale,
-                                   dynamic_loss_args={'init_scale': 2 ** 16})
+        para_model, optimizer = amp.initialize(para_model, optimizer, opt_level=args.fp16)
+
+        if args.restart:
+            if args.restart_from is not None:
+                checkpoint_name = f'amp_checkpoint_{args.restart_from}.pt'
+            else:
+                checkpoint_name = 'amp_checkpoint.pt'
+            with open(os.path.join(args.work_dir, checkpoint_name), 'rb') as f:
+                checkpoint = torch.load(f)
+                model.load_state_dict(checkpoint['model'])
+                optimizer.load_state_dict(checkpoint['optimizer'])
+                amp.load_state_dict(checkpoint['amp'])
 
     ###############################################################################
     # Training loop
@@ -705,8 +731,15 @@ if __name__ == "__main__":
         logging('Exiting from training early')
 
     # Load the best model.
-    with open(os.path.join(args.work_dir, 'model.pt'), 'rb') as f:
-        model = torch.load(f)
+    if args.fp16:
+        with open(os.path.join(args.work_dir, 'amp_checkpoint.pt'), 'rb') as f:
+            checkpoint = torch.load(f)
+            model.load_state_dict(checkpoint['model'])
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            amp.load_state_dict(checkpoint['amp'])
+    else:
+        with open(os.path.join(args.work_dir, 'model.pt'), 'rb') as f:
+            model = torch.load(f)
     para_model = model.to(device)
 
     # Run on test data.
@@ -718,5 +751,6 @@ if __name__ == "__main__":
     else:
         logging('| End of training | test loss {:5.2f} | test ppl {:9.3f}'.format(
             test_loss, math.exp(test_loss)))
-    wandb.log({"test_loss": test_loss, "global_step": model.compute})
+    if args.wandb:
+        wandb.log({"test_loss": test_loss, "global_step": model.compute})
     logging('=' * 100)

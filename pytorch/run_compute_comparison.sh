@@ -8,7 +8,7 @@ python train.py \
     --d_model 64 \
     --n_head 4 \
     --d_head 16 \
-    --d_inner 256 \
+    --d_inner 64 \
     --dropout 0.1 \
     --dropatt 0.0 \
     --optim adam \
