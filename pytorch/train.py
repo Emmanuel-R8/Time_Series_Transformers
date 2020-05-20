@@ -21,30 +21,6 @@ from torch_utils import non_emb_param_count, openai_compute
 
 from knockknock import slack_sender
 
-webhook_url = open("slack_webhook.txt").read()
-
-args = parser.parse_args()
-args.tied = not args.not_tied
-
-if args.d_embed < 0:
-    args.d_embed = args.d_model
-
-# Validate `--fp16` option
-if args.fp16:
-    if not args.cuda:
-        print('WARNING: --fp16 requires --cuda, ignoring --fp16 option')
-        args.fp16 = False
-    else:
-        try:
-            from apex import amp
-            if args.fp16 == "O1":
-                amp.register_half_function(torch, 'einsum')
-        except:
-            print('WARNING: apex not installed, ignoring --fp16 option')
-            args.fp16 = False
-
-device = torch.device('cuda' if args.cuda else 'cpu')
-
 
 ###############################################################################
 # Helper functions
@@ -377,40 +353,6 @@ def conditional_slack_sender(condition):
     return conditioned
 
 
-@conditional_slack_sender(args.knockknock)
-def run_training():
-    for epoch in itertools.count(start=first_epoch):
-        # we check before the training loop; expanding at epoch 0 means before training (for debug purposes)
-        if args.expand and str(epoch - 1) in args.expansion_dict:
-            n_add = int(args.expansion_dict[str(epoch - 1)])
-            expand_model(args.expand, args.integration, args.integration_length,
-                         n_add, model, optimizers, schedulers, tr_iter, va_iter, epoch, train_step)
-        if args.widen and str(epoch - 1) in args.widen_dict:
-            ratio = int(args.widen_dict[str(epoch - 1)])
-            widen_model(args.widen, ratio, model, optimizers, va_iter, epoch, train_step)
-        epoch_loop(epoch, para_model, optimizers, schedulers)
-        if train_step >= args.max_step:
-            logging('-' * 100)
-            logging('End of training')
-            break
-        if not args.debug and args.log_first_epochs:
-            if epoch <= args.log_first_epochs:
-                logging(f"saving model at the end of epoch {epoch}")
-                if args.fp16:
-                    with open(os.path.join(args.work_dir, f'amp_checkpoint_{epoch}.pt'), 'wb') as f:
-                        checkpoint = {
-                            'model': model.state_dict(),
-                            'optimizer': optimizer.state_dict(),
-                            'amp': amp.state_dict()
-                        }
-                        torch.save(checkpoint, f)
-                else:
-                    with open(os.path.join(args.work_dir, f'model_{epoch}.pt'), 'wb') as f:
-                        torch.save(model, f)
-                    with open(os.path.join(args.work_dir, f'optimizer_{epoch}.pt'), 'wb') as f:
-                        torch.save(optimizer.state_dict(), f)
-
-
 def expand_model(strategy, integration, integration_length, n_add, model: MemTransformerLM, optimizers, schedulers,
                  tr_iter, va_iter, epoch, step):
     optimizer, _ = optimizers
@@ -558,6 +500,30 @@ def fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration)
 
 
 if __name__ == "__main__":
+
+    webhook_url = open("slack_webhook.txt").read()
+
+    args = parser.parse_args()
+    args.tied = not args.not_tied
+
+    if args.d_embed < 0:
+        args.d_embed = args.d_model
+
+    # Validate `--fp16` option
+    if args.fp16:
+        if not args.cuda:
+            print('WARNING: --fp16 requires --cuda, ignoring --fp16 option')
+            args.fp16 = False
+        else:
+            try:
+                from apex import amp
+                if args.fp16 == "O1":
+                    amp.register_half_function(torch, 'einsum')
+            except:
+                print('WARNING: apex not installed, ignoring --fp16 option')
+                args.fp16 = False
+
+    device = torch.device('cuda' if args.cuda else 'cpu')
 
     # Set the random seed manually for reproducibility.
     np.random.seed(args.seed)
@@ -715,6 +681,40 @@ if __name__ == "__main__":
 
     log_start_time = time.time()
     eval_start_time = time.time()
+
+    # we define it here for the conditional knockknock call
+    @conditional_slack_sender(args.knockknock)
+    def run_training():
+        for epoch in itertools.count(start=first_epoch):
+            # we check before the training loop; expanding at epoch 0 means before training (for debug purposes)
+            if args.expand and str(epoch - 1) in args.expansion_dict:
+                n_add = int(args.expansion_dict[str(epoch - 1)])
+                expand_model(args.expand, args.integration, args.integration_length,
+                             n_add, model, optimizers, schedulers, tr_iter, va_iter, epoch, train_step)
+            if args.widen and str(epoch - 1) in args.widen_dict:
+                ratio = int(args.widen_dict[str(epoch - 1)])
+                widen_model(args.widen, ratio, model, optimizers, va_iter, epoch, train_step)
+            epoch_loop(epoch, para_model, optimizers, schedulers)
+            if train_step >= args.max_step:
+                logging('-' * 100)
+                logging('End of training')
+                break
+            if not args.debug and args.log_first_epochs:
+                if epoch <= args.log_first_epochs:
+                    logging(f"saving model at the end of epoch {epoch}")
+                    if args.fp16:
+                        with open(os.path.join(args.work_dir, f'amp_checkpoint_{epoch}.pt'), 'wb') as f:
+                            checkpoint = {
+                                'model': model.state_dict(),
+                                'optimizer': optimizer.state_dict(),
+                                'amp': amp.state_dict()
+                            }
+                            torch.save(checkpoint, f)
+                    else:
+                        with open(os.path.join(args.work_dir, f'model_{epoch}.pt'), 'wb') as f:
+                            torch.save(model, f)
+                        with open(os.path.join(args.work_dir, f'optimizer_{epoch}.pt'), 'wb') as f:
+                            torch.save(optimizer.state_dict(), f)
 
     # At any point you can hit Ctrl + C to break out of training early.
     try:
