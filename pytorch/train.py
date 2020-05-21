@@ -43,7 +43,9 @@ def update_dropatt(m):
         m.dropatt_p = args.dropatt
 
 
-def parallelize_model(model):
+def parallelize_model(model, args):
+    # bit hacky, we re-instantiate device here to be able to import this function elsewhere
+    device = torch.device('cuda' if args.cuda else 'cpu')
     if args.multi_gpu:
         model = model.to(device)
         if args.gpu0_bsz >= 0:
@@ -57,7 +59,7 @@ def parallelize_model(model):
     return para_model
 
 
-def build_optimizer(model, reload=False):
+def build_optimizer(model, args, reload=False):
     optimizer_sparse = None
     if args.optim.lower() == 'sgd':
         if args.sample_softmax > 0:
@@ -114,7 +116,7 @@ def build_optimizer(model, reload=False):
     return optimizer, optimizer_sparse
 
 
-def build_scheduler(optimizers):
+def build_scheduler(optimizers, args):
     optimizer, optimizer_sparse = optimizers
     scheduler_sparse = None
     if args.scheduler == 'cosine':
@@ -166,12 +168,12 @@ def evaluate(eval_iter, model):
     # debug
     # If the model does not use memory at all, make the ext_len longer.
     # Otherwise, make the mem_len longer and keep the ext_len the same.
-    # if args.mem_len == 0:
-    #     model.reset_length(args.eval_tgt_len,
-    #                        args.ext_len + args.tgt_len - args.eval_tgt_len, args.mem_len)
+    # if default_args.mem_len == 0:
+    #     model.reset_length(default_args.eval_tgt_len,
+    #                        default_args.ext_len + default_args.tgt_len - default_args.eval_tgt_len, default_args.mem_len)
     # else:
-    #     model.reset_length(args.eval_tgt_len,
-    #                        args.ext_len, args.mem_len + args.tgt_len - args.eval_tgt_len)
+    #     model.reset_length(default_args.eval_tgt_len,
+    #                        default_args.ext_len, default_args.mem_len + default_args.tgt_len - default_args.eval_tgt_len)
 
     # Evaluation
     total_len, total_loss = 0, 0.
@@ -187,7 +189,7 @@ def evaluate(eval_iter, model):
             total_len += seq_len
 
     # Switch back to the training mode
-    # model.reset_length(args.tgt_len, args.ext_len, args.mem_len)
+    # model.reset_length(default_args.tgt_len, default_args.ext_len, default_args.mem_len)
     model.train()
 
     return total_loss / total_len
@@ -225,7 +227,6 @@ def epoch_loop(epoch, model, optimizers, schedulers):
     else:
         mems = tuple()
     train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
-    start_time = time.time()
     for batch, (data, target, seq_len) in enumerate(train_iter):
         model.zero_grad()
         if args.batch_chunk > 1:
@@ -291,7 +292,6 @@ def epoch_loop(epoch, model, optimizers, schedulers):
             scheduler.step(train_step)
 
         if train_step % args.log_interval == 0:
-            print("{:e}".format(parent_model.compute * 24 * 3600 / (time.time() - start_time)))
             cur_loss = np.mean(train_losses)
             elapsed = time.time() - log_start_time
             log_str = '| epoch {:3d} step {:>8d} | {:>6d} batches | lr {:.3g} ' \
@@ -343,7 +343,6 @@ def epoch_loop(epoch, model, optimizers, schedulers):
 
 
 def conditional_slack_sender(condition):
-
     def conditioned(func):
         if condition:
             return slack_sender(webhook_url=webhook_url, channel="Teven")(func)
@@ -517,6 +516,7 @@ if __name__ == "__main__":
         else:
             try:
                 from apex import amp
+
                 if args.fp16 == "O1":
                     amp.register_half_function(torch, 'einsum')
             except:
@@ -639,10 +639,10 @@ if __name__ == "__main__":
     logging('#params = {}'.format(args.n_all_param))
     logging('#non emb params = {}'.format(args.n_nonemb_param))
 
-    para_model = parallelize_model(model)
-    optimizers = build_optimizer(para_model, reload=args.restart and not args.fp16)
+    para_model = parallelize_model(model, args)
+    optimizers = build_optimizer(para_model, args, reload=args.restart and not args.fp16)
     optimizer, optimizer_sparse = optimizers
-    schedulers = build_scheduler(optimizers)
+    schedulers = build_scheduler(optimizers, args)
     scheduler, scheduler_sparse = schedulers
 
     if args.cuda and args.fp16:
@@ -675,12 +675,13 @@ if __name__ == "__main__":
     else:
         train_step = model.training_steps
     best_val_loss = None
-    # Reload previous step number in case of args.restart
+    # Reload previous step number in case of default_args.restart
     if train_step > 0:
         logging(f"restarting from step {train_step}")
 
     log_start_time = time.time()
     eval_start_time = time.time()
+
 
     # we define it here for the conditional knockknock call
     @conditional_slack_sender(args.knockknock)
@@ -715,6 +716,7 @@ if __name__ == "__main__":
                             torch.save(model, f)
                         with open(os.path.join(args.work_dir, f'optimizer_{epoch}.pt'), 'wb') as f:
                             torch.save(optimizer.state_dict(), f)
+
 
     # At any point you can hit Ctrl + C to break out of training early.
     try:
