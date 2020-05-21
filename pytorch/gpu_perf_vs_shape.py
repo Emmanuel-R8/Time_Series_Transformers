@@ -196,7 +196,7 @@ if __name__ == "__main__":
             tie_projs += [False] * len(cutoffs)
 
     for n_layer, d_model, batch_size in product(args.n_layers, args.d_models, args.batch_sizes):
-        
+
         tracker = ImpactTracker("impact")
         tracker.launch_impact_monitor()
 
