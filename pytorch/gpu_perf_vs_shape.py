@@ -9,7 +9,6 @@ import json
 import torch
 import torch.nn as nn
 from apex import amp
-from experiment_impact_tracker.compute_tracker import ImpactTracker
 
 from data_utils import get_lm_corpus
 from mem_transformer import MemTransformerLM
@@ -128,10 +127,16 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--d_models', nargs='+', help='d_models to test', required=True)
     parser.add_argument('-b', '--batch_sizes', nargs='+', help='batch sizes to test', required=True)
     parser.add_argument('--fp16', type=str, default=None, choices=["O1", "O2", "O0"])
+    parser.add_argument('-t', '--tracking', action="store_true")
+    parser.add_argument('--reload', action="store_true")
     args = parser.parse_args()
 
     start_time = time.time()
-    results = {}
+    if args.reload:
+        results = json.load(open(f"compute_grid_results_{args.fp16}.json"))
+        print(f"reloaded from compute_grid_results_{args.fp16}.json")
+    else:
+        results = {}
 
     default_args = DotDict({'data': '../data/wikitext-103/',
                             'dataset': 'wt103',
@@ -178,8 +183,10 @@ if __name__ == "__main__":
 
     device = torch.device('cuda' if default_args.cuda else 'cpu')
 
-    if args.fp16:
+    if args.fp16 == "O1":
         amp.register_half_function(torch, 'einsum')
+    if args.tracking:
+        from experiment_impact_tracker.compute_tracker import ImpactTracker
 
     corpus = get_lm_corpus(default_args.data, default_args.dataset)
     ntokens = len(corpus.vocab)
@@ -197,10 +204,16 @@ if __name__ == "__main__":
 
     for n_layer, d_model, batch_size in product(args.n_layers, args.d_models, args.batch_sizes):
 
-        tracker = ImpactTracker("impact")
-        tracker.launch_impact_monitor()
-
         n_layer, d_model, batch_size = int(n_layer), int(d_model), int(batch_size)
+
+        if args.tracking:
+            tracker = ImpactTracker("impact")
+            tracker.launch_impact_monitor()
+        if args.reload:
+            if str((n_layer, d_model, batch_size)) in results.keys():
+                print(f"{(n_layer, d_model, batch_size)} already in results")
+                continue
+
         n_head, d_head = head_repartition_rule(d_model)
         d_inner = d_model
 
@@ -214,10 +227,9 @@ if __name__ == "__main__":
         initialization_func = partial(weights_init, init="normal", init_range=0.1, init_std=0.02, proj_init_std=0.01)
         model.apply(initialization_func)
 
-        tr_iter = corpus.get_iterator('train', batch_size, default_args.tgt_len,
-                                      device=device, ext_len=default_args.ext_len)
-
         try:
+            tr_iter = corpus.get_iterator('train', batch_size, default_args.tgt_len,
+                                          device=device, ext_len=default_args.ext_len)
             para_model = parallelize_model(model, default_args)
             optimizers = build_optimizer(para_model, default_args, reload=False)
             optimizer, optimizer_sparse = optimizers
@@ -232,7 +244,7 @@ if __name__ == "__main__":
             print(f"n_layer {n_layer} d_model {d_model} batch_size {batch_size} fp16 {args.fp16}: " +
                   "{:.4e} FLOs in {:.4e}s for ".format(compute, run_time) + f"{processed_tokens} tokens, "
                                                                             f"total time {total_time}")
-            results[str((n_layer, d_model, batch_size))] = compute, run_time, processed_tokens, compute/run_time
+            results[str((n_layer, d_model, batch_size))] = compute, run_time, processed_tokens, compute / run_time
 
         except RuntimeError as e:
             print('-' * 100)
@@ -243,11 +255,14 @@ if __name__ == "__main__":
 
         finally:
             # Handle CUDA OOM Error Safely
-            del model
-            del para_model
-            del optimizer
-            del scheduler
-            gc.collect()
-            torch.cuda.empty_cache()
+            try:
+                del model
+                del para_model
+                del optimizer
+                del scheduler
+                gc.collect()
+                torch.cuda.empty_cache()
+            except NameError:
+                pass
 
         json.dump(results, open(f"compute_grid_results_{args.fp16}.json", "w"), indent=2)
