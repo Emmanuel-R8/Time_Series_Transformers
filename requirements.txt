@@ -1,6 +1,5 @@
 absl-py==0.9.0
 altair==4.1.0
-apex==0.1
 arrow==0.15.6
 astor==0.8.1
 attrs==19.3.0
