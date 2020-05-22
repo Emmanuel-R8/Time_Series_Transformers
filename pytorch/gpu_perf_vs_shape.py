@@ -133,8 +133,11 @@ if __name__ == "__main__":
 
     start_time = time.time()
     if args.reload:
-        results = json.load(open(f"compute_grid_results_{args.fp16}.json"))
-        print(f"reloaded from compute_grid_results_{args.fp16}.json")
+        try:
+            results = json.load(open(f"compute_grid_results_{args.fp16}.json"))
+            print(f"reloaded from compute_grid_results_{args.fp16}.json")
+        except FileNotFoundError:
+            results = {}
     else:
         results = {}
 
@@ -210,7 +213,7 @@ if __name__ == "__main__":
             tracker = ImpactTracker("impact")
             tracker.launch_impact_monitor()
         if args.reload:
-            if str((n_layer, d_model, batch_size)) in results.keys():
+            if results.get(str((n_layer, d_model, batch_size))) is not None:
                 print(f"{(n_layer, d_model, batch_size)} already in results")
                 continue
 
@@ -264,5 +267,5 @@ if __name__ == "__main__":
                 torch.cuda.empty_cache()
             except NameError:
                 pass
-
-        json.dump(results, open(f"compute_grid_results_{args.fp16}.json", "w"), indent=2)
+        with open(f"compute_grid_results_{args.fp16}.json", "w") as f:
+            json.dump(results, f, indent=2)
