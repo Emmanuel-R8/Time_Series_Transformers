@@ -213,7 +213,7 @@ if __name__ == "__main__":
 
         if args.tracking:
             from experiment_impact_tracker.compute_tracker import ImpactTracker
-            tracker = ImpactTracker("impact")
+            tracker = ImpactTracker(f"impact/{n_layer}_{d_model}_{batch_size}")
             tracker.launch_impact_monitor()
 
         n_head, d_head = head_repartition_rule(d_model)
