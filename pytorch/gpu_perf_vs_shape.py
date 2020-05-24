@@ -188,8 +188,6 @@ if __name__ == "__main__":
 
     if args.fp16 == "O1":
         amp.register_half_function(torch, 'einsum')
-    if args.tracking:
-        from experiment_impact_tracker.compute_tracker import ImpactTracker
 
     corpus = get_lm_corpus(default_args.data, default_args.dataset)
     ntokens = len(corpus.vocab)
@@ -208,14 +206,15 @@ if __name__ == "__main__":
     for n_layer, d_model, batch_size in product(args.n_layers, args.d_models, args.batch_sizes):
 
         n_layer, d_model, batch_size = int(n_layer), int(d_model), int(batch_size)
-
-        if args.tracking:
-            tracker = ImpactTracker("impact")
-            tracker.launch_impact_monitor()
         if args.reload:
             if results.get(str((n_layer, d_model, batch_size))) is not None:
                 print(f"{(n_layer, d_model, batch_size)} already in results")
                 continue
+
+        if args.tracking:
+            from experiment_impact_tracker.compute_tracker import ImpactTracker
+            tracker = ImpactTracker("impact")
+            tracker.launch_impact_monitor()
 
         n_head, d_head = head_repartition_rule(d_model)
         d_inner = d_model
