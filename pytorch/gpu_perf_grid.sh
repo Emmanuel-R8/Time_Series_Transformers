@@ -7,7 +7,7 @@ do
         do
             for amp_mode in O1 O2 O0
             do
-                python -W ignore gpu_perf_vs_shape.py -l $l -d $d -b $b --fp16 $amp_mode --reload --tracking
+                python -W ignore gpu_perf_vs_shape.py -l $l -d $d -b $b --fp16 $amp_mode --reload
             done
         done
     done

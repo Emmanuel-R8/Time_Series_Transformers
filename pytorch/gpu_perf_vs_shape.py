@@ -189,10 +189,6 @@ if __name__ == "__main__":
     if args.fp16 == "O1":
         amp.register_half_function(torch, 'einsum')
 
-    corpus = get_lm_corpus(default_args.data, default_args.dataset)
-    ntokens = len(corpus.vocab)
-    default_args.n_token = ntokens
-
     cutoffs, tie_projs = [], [False]
     if default_args.adaptive:
         assert default_args.dataset in ['wt103', 'lm1b']
@@ -210,6 +206,10 @@ if __name__ == "__main__":
             if results.get(str((n_layer, d_model, batch_size))) is not None:
                 print(f"{(n_layer, d_model, batch_size)} already in results")
                 continue
+
+        corpus = get_lm_corpus(default_args.data, default_args.dataset)
+        ntokens = len(corpus.vocab)
+        default_args.n_token = ntokens
 
         if args.tracking:
             from experiment_impact_tracker.compute_tracker import ImpactTracker
