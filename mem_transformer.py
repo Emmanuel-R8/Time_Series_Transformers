@@ -9,8 +9,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 sys.path.append('utils')
-from proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
-from log_uniform_sampler import LogUniformSampler, sample_logits
+from utils.proj_adaptive_softmax import ProjectedAdaptiveLogSoftmax
+from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, demb):
@@ -202,11 +202,7 @@ class RelMultiHeadAttn(nn.Module):
 
         if zero_triu:
             ones = torch.ones((x.size(2), x.size(3)))
-<<<<<<< HEAD:mem_transformer.py
             x = x * torch.tril(ones, x.size(3) - x.size(2))[None, None, :, :]
-=======
-            x = x * torch.tril(ones, x.size(1) - x.size(0))[:,:,None,None]
->>>>>>> 6d39543ca4e8a7538467379094e6c3c6b5ea5965:pytorch/mem_transformer.py
 
         return x
 
@@ -250,17 +246,10 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         r_head_k = r_head_k.view(rlen, self.n_head, self.d_head)                # qlen x n_head x d_head
 
         #### compute attention score
-<<<<<<< HEAD:mem_transformer.py
         rw_head_q = w_head_q + r_w_bias                                         # qlen x bsz x n_head x d_head
         AC = torch.einsum('ibnd,jbnd->bnij', (rw_head_q, w_head_k))             # bsz x n_head x qlen x klen
 
         rr_head_q = w_head_q + r_r_bias
-=======
-        rw_head_q = w_head_q + self.r_w_bias  # qlen x bsz x n_head x d_head
-        AC = torch.einsum('ibnd,jbnd->bnij', (rw_head_q, w_head_k))             # bsz x n_head x qlen x klen
-
-        rr_head_q = w_head_q + self.r_r_bias
->>>>>>> 6d39543ca4e8a7538467379094e6c3c6b5ea5965:pytorch/mem_transformer.py
         BD = torch.einsum('ibnd,jnd->bnij', (rr_head_q, r_head_k))              # bsz x n_head x qlen x klen
         BD = self._rel_shift(BD)
 
@@ -478,13 +467,8 @@ class AdaptiveEmbedding(nn.Module):
         else:
             param = next(self.parameters())
             inp_flat = inp.reshape(-1)
-<<<<<<< HEAD:mem_transformer.py
             emb_flat = torch.zeros([inp_flat.size(0), self.d_proj], 
                 dtype=param.dtype, device=param.device)
-=======
-            emb_flat = torch.zeros([inp_flat.size(0), self.d_proj],
-                                   dtype=param.dtype, device=param.device)
->>>>>>> 6d39543ca4e8a7538467379094e6c3c6b5ea5965:pytorch/mem_transformer.py
             for i in range(len(self.cutoffs)):
                 l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
 
@@ -671,11 +655,7 @@ class MemTransformerLM(nn.Module):
                     + torch.tril(all_ones, -mask_shift_len)).byte()[:, :, None] # -1
         else:
             dec_attn_mask = torch.triu(
-<<<<<<< HEAD:mem_transformer.py
                 word_emb.new_ones(qlen, klen), diagonal=1+mlen).byte()[:,:,None]
-=======
-                word_emb.new_ones(qlen, klen), diagonal=1 + mlen).bool()[:, :, None]
->>>>>>> 6d39543ca4e8a7538467379094e6c3c6b5ea5965:pytorch/mem_transformer.py
         dec_attn_mask = dec_attn_mask.bool()  # Convert to bool
 
         hids = []
