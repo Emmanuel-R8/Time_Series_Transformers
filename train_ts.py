@@ -242,14 +242,17 @@ def epoch_loop(epoch, model, optimizers, schedulers):
         # step-wise learning rate annealing
         train_step += 1
         parent_model.training_steps += 1
+
         # check for yet-to-thaw parameters
         if getattr(parent_model, "freeze_countdown", 0) > 0:
             parent_model.freeze_countdown -= 1
+
             # if this is the last step
             if parent_model.freeze_countdown == 0:
                 for parameter in parent_model.parameters():
                     parameter.requires_grad = True
                 logging("thawing all parameters")
+        
         if args.scheduler in ['cosine', 'constant', 'dev_perf']:
             # linear warmup stage
             if train_step < args.warmup_step:

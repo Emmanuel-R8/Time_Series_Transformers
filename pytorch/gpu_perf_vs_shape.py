@@ -14,7 +14,7 @@ from data_utils import get_lm_corpus
 from mem_transformer import MemTransformerLM
 from utils.initialization import weights_init
 from train import parallelize_model, build_optimizer, build_scheduler
-from torch_utils import non_emb_param_count, openai_compute
+from utils.torch_utils import non_emb_param_count, openai_compute
 
 
 class DotDict(dict):
@@ -120,6 +120,7 @@ def benchmark(model, optimizers, schedulers):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='benchmarking script')
+
     parser.add_argument('-l', '--n_layers', nargs='+',
                         help='n_layers to test', required=True)
     parser.add_argument('-d', '--d_models', nargs='+',
@@ -142,8 +143,8 @@ if __name__ == "__main__":
     else:
         results = {}
 
-    default_args = DotDict({'data': '../data/wikitext-103/',
-                            'dataset': 'wt103',
+    default_args = DotDict({'data': '../data/enwik8/',
+                            'dataset': 'enwik8',
                             'batch_chunk': 1,
                             'not_tied': False,
                             'div_val': 1,

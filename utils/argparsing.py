@@ -10,11 +10,12 @@ class StoreDictKeyPair(argparse.Action):
         setattr(namespace, self.dest, my_dict)
 
 
-parser = argparse.ArgumentParser(description='PyTorch Transformer Language Model')
+parser = argparse.ArgumentParser(
+    description='PyTorch Transformer Language Model')
 
 parser.add_argument('--data', type=str, default='../data/wikitext-103',
                     help='location of the data corpus')
-parser.add_argument('--dataset', type=str, default='wt103',
+parser.add_argument('--dataset', type=str, default='enwik8',
                     choices=['wt103', 'lm1b', 'enwik8', 'text8'],
                     help='dataset name')
 

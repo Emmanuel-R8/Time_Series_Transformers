@@ -2,7 +2,7 @@ echo 'Run training...'
 python train.py \
     --cuda \
     --data ../data/wikitext-103/ \
-    --dataset wt103 \
+    --dataset enwik103 \
     --n_layer 2 \
     --d_model 64 \
     --n_head 4 \

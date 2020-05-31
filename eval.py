@@ -15,7 +15,7 @@ parser = argparse.ArgumentParser(
     description='PyTorch Transformer Language Model')
 parser.add_argument('--data', type=str, default='../data/etf/allData.csv',
                     help='location of the data file')
-parser.add_argument('--dataset', type=str, default='wt103',
+parser.add_argument('--dataset', type=str, default='enwik8',
                     choices=['wt103', 'lm1b', 'enwik8', 'text8'],
                     help='dataset name')
 parser.add_argument('--split', type=str, default='all',
