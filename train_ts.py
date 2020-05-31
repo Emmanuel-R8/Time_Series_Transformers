@@ -18,15 +18,12 @@ from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel
 from utils.initialization import weights_init
 from utils.argparsing import parser
-from torch_utils import non_emb_param_count, openai_compute
-
-from knockknock import slack_sender
+from utils.torch_utils import non_emb_param_count, openai_compute
 
 
 ###############################################################################
 # Helper functions
 ###############################################################################
-
 
 def update_dropout(m):
     classname = m.__class__.__name__
@@ -45,7 +42,8 @@ def update_dropatt(m):
 
 
 def parallelize_model(model, args):
-    # bit hacky, we re-instantiate device here to be able to import this function elsewhere
+    # bit hacky, we re-instantiate device here to be able to import this
+    # function elsewhere
     device = torch.device('cuda' if args.cuda else 'cpu')
     if args.multi_gpu:
         model = model.to(device)
