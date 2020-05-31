@@ -37,8 +37,6 @@ parser.add_argument('--batch_chunk', type=int, default=1,
 
 parser.add_argument('--not_tied', action='store_true',
                     help='do not tie the word embedding and softmax weights')
-parser.add_argument('--adaptive', action='store_true',
-                    help='use adaptive softmax')
 parser.add_argument('--div_val', type=int, default=1,
                     help='divident value for adapative input and softmax')
 parser.add_argument('--pre_lnorm', action='store_true',

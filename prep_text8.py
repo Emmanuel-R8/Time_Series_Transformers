@@ -25,6 +25,7 @@ test_data = data[-num_test_chars:]
 for fn, part in [('train.txt', train_data), ('valid.txt', valid_data), ('test.txt', test_data)]:
     print('{} will have {} bytes'.format(fn, len(part)))
     print('- Tokenizing...')
+
     # Change space ' ' to underscore '_'
     part_str = ' '.join(['_' if c == ' ' else c for c in part.strip()])
     print('- Writing...')

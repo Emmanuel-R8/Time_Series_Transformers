@@ -3,7 +3,6 @@ python train.py \
     --cuda \
     --data ../data/wikitext-103/ \
     --dataset wt103 \
-    --adaptive \
     --n_layer 2 \
     --d_model 64 \
     --n_head 4 \

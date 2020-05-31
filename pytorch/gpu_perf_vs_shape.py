@@ -146,7 +146,6 @@ if __name__ == "__main__":
                             'dataset': 'wt103',
                             'batch_chunk': 1,
                             'not_tied': False,
-                            'adaptive': True,
                             'div_val': 1,
                             'pre_lnorm': False,
                             'attn_type': 0,
@@ -190,14 +189,6 @@ if __name__ == "__main__":
         amp.register_half_function(torch, 'einsum')
 
     cutoffs, tie_projs = [], [False]
-    if default_args.adaptive:
-        assert default_args.dataset in ['wt103', 'lm1b']
-        if default_args.dataset == 'wt103':
-            cutoffs = [20000, 40000, 200000]
-            tie_projs += [True] * len(cutoffs)
-        elif default_args.dataset == 'lm1b':
-            cutoffs = [60000, 100000, 640000]
-            tie_projs += [False] * len(cutoffs)
 
     for n_layer, d_model, batch_size in product(args.n_layers, args.d_models, args.batch_sizes):
 

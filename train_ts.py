@@ -143,10 +143,12 @@ def evaluate(eval_iter, model):
     # Otherwise, make the mem_len longer and keep the ext_len the same.
     # if default_args.mem_len == 0:
     #     model.reset_length(default_args.eval_tgt_len,
-    #                        default_args.ext_len + default_args.tgt_len - default_args.eval_tgt_len, default_args.mem_len)
+    #                        default_args.ext_len + default_args.tgt_len -
+    #                        default_args.eval_tgt_len, default_args.mem_len)
     # else:
     #     model.reset_length(default_args.eval_tgt_len,
-    #                        default_args.ext_len, default_args.mem_len + default_args.tgt_len - default_args.eval_tgt_len)
+    #                        default_args.ext_len, default_args.mem_len +
+    #                       default_args.tgt_len - default_args.eval_tgt_len)   
 
     # Evaluation
     total_len, total_loss = 0, 0.
@@ -162,7 +164,8 @@ def evaluate(eval_iter, model):
             total_len += seq_len
 
     # Switch back to the training mode
-    # model.reset_length(default_args.tgt_len, default_args.ext_len, default_args.mem_len)
+    # model.reset_length(default_args.tgt_len, default_args.ext_len,
+    # default_args.mem_len)
     model.train()
 
     return total_loss / total_len
@@ -266,7 +269,9 @@ def epoch_loop(epoch, model, optimizers, schedulers):
                 '| lr {:.3g} ' \
                 '| ms/batch {:5.2f} ' \
                 '| loss {:5.2f}'.format(
-                    epoch, train_step, batch + 1, optimizer.param_groups[0]['lr'], elapsed * 1000 / args.log_interval, cur_loss)
+                    epoch, train_step, batch + 1,
+                    optimizer.param_groups[0]['lr'],
+                    elapsed * 1000 / args.log_interval, cur_loss)
 
             if args.dataset in ['enwik8', 'text8']:
                 log_str += ' | bpc {:9.5f}'.format(cur_loss / math.log(2))
@@ -280,11 +285,13 @@ def epoch_loop(epoch, model, optimizers, schedulers):
         if train_step % args.eval_interval == 0:
             val_loss = evaluate(va_iter, model)
             log_val(val_loss, step=train_step, compute=parent_model.compute)
-            # Save the model if the validation loss is the best we've seen so far.
+            # Save the model if the validation loss is the best we've seen so
+            # far.
             if not best_val_loss or val_loss < best_val_loss:
                 if not args.debug:
                     if args.fp16:
-                        with open(os.path.join(args.work_dir, 'amp_checkpoint.pt'), 'wb') as f:
+                        with open(os.path.join(args.work_dir,
+                                               'amp_checkpoint.pt'), 'wb') as f:
                             checkpoint = {
                                 'model': model.state_dict(),
                                 'optimizer': optimizer.state_dict(),
@@ -292,9 +299,11 @@ def epoch_loop(epoch, model, optimizers, schedulers):
                             }
                             torch.save(checkpoint, f)
                     else:
-                        with open(os.path.join(args.work_dir, 'model.pt'), 'wb') as f:
+                        with open(os.path.join(args.work_dir,
+                                  'model.pt'), 'wb') as f:
                             torch.save(parent_model, f)
-                        with open(os.path.join(args.work_dir, 'optimizer.pt'), 'wb') as f:
+                        with open(os.path.join(args.work_dir,
+                                  'optimizer.pt'), 'wb') as f:
                             torch.save(optimizer.state_dict(), f)
                 best_val_loss = val_loss
 
@@ -338,8 +347,8 @@ def expand_model(strategy, integration, integration_length, n_add,
 
     # optimizer update
     optimizer.add_param_group({'params': new_layers.parameters(),
-                               'lr': optimizer.param_groups[0]["lr"],
-                               'initial_lr': optimizer.param_groups[0]["initial_lr"]})
+                        'lr': optimizer.param_groups[0]["lr"],
+                        'initial_lr': optimizer.param_groups[0]["initial_lr"]})
     scheduler.base_lrs.append(optimizer.param_groups[-1]["initial_lr"])
 
     # training loop for reverse distillation
@@ -542,16 +551,7 @@ if __name__ == "__main__":
     te_iter = corpus.get_iterator('test', eval_batch_size, args.eval_tgt_len,
                                   device=device, ext_len=args.ext_len)
 
-    # adaptive softmax / embedding
     cutoffs, tie_projs = [], [False]
-    if args.adaptive:
-        assert args.dataset in ['wt103', 'lm1b']
-        if args.dataset == 'wt103':
-            cutoffs = [20000, 40000, 200000]
-            tie_projs += [True] * len(cutoffs)
-        elif args.dataset == 'lm1b':
-            cutoffs = [60000, 100000, 640000]
-            tie_projs += [False] * len(cutoffs)
 
     ############################################################################
     # Define model
