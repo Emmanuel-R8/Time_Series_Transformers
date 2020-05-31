@@ -137,8 +137,6 @@ parser.add_argument('--finetune_v2', action='store_true',
 parser.add_argument('--finetune_v3', action='store_true',
                     help='finetune v3')
 
-parser.add_argument('--wandb', type=str, default=None,
-                    help='Use weights and biases logging.')
 parser.add_argument('--log_first_epochs', type=int, default=0,
                     help='number of first epochs to log')
 parser.add_argument('--restart_from', type=int, default=None,

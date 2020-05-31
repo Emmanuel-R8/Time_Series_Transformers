@@ -2,7 +2,8 @@
 import argparse
 import time
 import math
-import os, sys
+import os
+import sys
 
 import torch
 
@@ -10,9 +11,10 @@ from data_utils import get_lm_corpus
 from mem_transformer import MemTransformerLM
 from utils.exp_utils import get_logger
 
-parser = argparse.ArgumentParser(description='PyTorch Transformer Language Model')
-parser.add_argument('--data', type=str, default='../data/wikitext-103',
-                    help='location of the data corpus')
+parser = argparse.ArgumentParser(
+    description='PyTorch Transformer Language Model')
+parser.add_argument('--data', type=str, default='../data/etf/allData.csv',
+                    help='location of the data file')
 parser.add_argument('--dataset', type=str, default='wt103',
                     choices=['wt103', 'lm1b', 'enwik8', 'text8'],
                     help='dataset name')
@@ -51,9 +53,9 @@ corpus = get_lm_corpus(args.data, args.dataset)
 ntokens = len(corpus.vocab)
 
 va_iter = corpus.get_iterator('valid', args.batch_size, args.tgt_len,
-    device=device, ext_len=args.ext_len)
+                              device=device, ext_len=args.ext_len)
 te_iter = corpus.get_iterator('test', args.batch_size, args.tgt_len,
-    device=device, ext_len=args.ext_len)
+                              device=device, ext_len=args.ext_len)
 
 # Load the best saved model.
 with open(os.path.join(args.work_dir, 'model.pt'), 'rb') as f:
@@ -61,7 +63,7 @@ with open(os.path.join(args.work_dir, 'model.pt'), 'rb') as f:
 model = model.to(device)
 
 logging('Evaluating with bsz {} tgt_len {} ext_len {} mem_len {} clamp_len {}'.format(
-       args.batch_size, args.tgt_len, args.ext_len, args.mem_len, args.clamp_len))
+    args.batch_size, args.tgt_len, args.ext_len, args.mem_len, args.clamp_len))
 
 model.reset_length(args.tgt_len, args.ext_len, args.mem_len)
 if args.clamp_len > 0:
@@ -72,6 +74,8 @@ if args.same_length:
 ###############################################################################
 # Evaluation code
 ###############################################################################
+
+
 def evaluate(eval_iter):
     # Turn on evaluation mode which disables dropout.
     model.eval()
@@ -90,6 +94,7 @@ def evaluate(eval_iter):
             total_time, 1000 * total_time / (idx+1)))
     return total_loss / total_len
 
+
 # Run on test data.
 if args.split == 'all':
     test_loss = evaluate(te_iter)
@@ -101,6 +106,7 @@ elif args.split == 'test':
     test_loss = evaluate(te_iter)
     valid_loss = None
 
+
 def format_log(loss, split):
     if args.dataset in ['enwik8', 'text8']:
         log_str = '| {0} loss {1:5.2f} | {0} bpc {2:9.5f} '.format(
@@ -109,6 +115,7 @@ def format_log(loss, split):
         log_str = '| {0} loss {1:5.2f} | {0} ppl {2:9.3f} '.format(
             split, loss, math.exp(loss))
     return log_str
+
 
 log_str = ''
 if valid_loss is not None:

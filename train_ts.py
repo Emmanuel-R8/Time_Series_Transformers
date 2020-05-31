@@ -82,11 +82,12 @@ def build_optimizer(model, args, reload=False):
                 opt_state_dict = torch.load(optim_file)
                 try:
                     optimizer.load_state_dict(opt_state_dict)
-                # in case the optimizer param groups aren't the same shape, merge them
+                # in case the optimizer param groups aren't the same shape,
+                # merge them
                 except:
                     logging("merging optimizer param groups")
-                    opt_state_dict["param_groups"][0]["params"] \
-                        = [param for param_group in opt_state_dict["param_groups"] for param in param_group["params"]]
+                    opt_state_dict["param_groups"][0]["params"] = \
+                            [param for param_group in opt_state_dict["param_groups"] for param in param_group["params"]]
                     opt_state_dict["param_groups"] = [
                         opt_state_dict["param_groups"][0]]
                     optimizer.load_state_dict(opt_state_dict)
@@ -178,8 +179,6 @@ def log_val(val_loss, step, compute):
     else:
         log_str += ' | valid ppl {:9.3f}'.format(math.exp(val_loss))
     logging(log_str)
-    if args.wandb:
-        wandb.log({"valid_loss": val_loss, "global_step": compute}, step=step)
     logging('-' * 100)
 
 
@@ -275,9 +274,6 @@ def epoch_loop(epoch, model, optimizers, schedulers):
                 log_str += ' | ppl {:9.3f}'.format(math.exp(cur_loss))
             logging(log_str)
 
-            if args.wandb:
-                wandb.log({"train_loss": cur_loss, "learning rate": optimizer.param_groups[0]['lr']},
-                          step=train_step)
             train_losses = []
             log_start_time = time.time()
 
@@ -530,24 +526,6 @@ if __name__ == "__main__":
     logging = create_exp_dir(args.work_dir,
                              scripts_to_save=['train.py', 'mem_transformer.py'], debug=args.debug)
 
-    if args.wandb:
-        import wandb
-
-        logged_params = {"dataset": args.dataset,
-                         "sequence_length": args.tgt_len,
-                         "memory_length": args.mem_len,
-                         "n_embd": args.d_model,
-                         "d_inner": args.d_inner,
-                         "n_layer": args.n_layer,
-                         "n_head": args.n_head,
-                         "dropout": args.dropout,
-                         "div_val": args.div_val,
-                         "codebase": "CMU",
-                         "expansion_style": args.expand,
-                         "expansion_times": args.expansion_dict
-                         }
-        wandb.init(project=args.wandb, config=logged_params)
-
     ############################################################################
     # Load data
     ############################################################################
@@ -746,6 +724,4 @@ if __name__ == "__main__":
     else:
         logging('| End of training | test loss {:5.2f} | test ppl {:9.3f}'.format(
             test_loss, math.exp(test_loss)))
-    if args.wandb:
-        wandb.log({"test_loss": test_loss, "global_step": model.compute})
     logging('=' * 100)
