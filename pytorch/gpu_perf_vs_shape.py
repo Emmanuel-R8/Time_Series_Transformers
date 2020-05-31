@@ -89,14 +89,15 @@ def benchmark(model, optimizers, schedulers):
             train_losses.append(loss.float().item())
 
         if args.fp16:
-            torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), default_args.clip)
+            torch.nn.utils.clip_grad_norm_(
+                amp.master_params(optimizer), default_args.clip)
         else:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), default_args.clip)
+            torch.nn.utils.clip_grad_norm_(
+                model.parameters(), default_args.clip)
 
         optimizer.step()
-        parent_model.compute += openai_compute(non_emb_param_count(parent_model, ntokens), data.numel(), 1)
-        if default_args.sample_softmax > 0:
-            optimizer_sparse.step()
+        parent_model.compute += openai_compute(
+            non_emb_param_count(parent_model, ntokens), data.numel(), 1)
 
         # step-wise learning rate annealing
         train_step += 1
@@ -106,13 +107,9 @@ def benchmark(model, optimizers, schedulers):
             if train_step < default_args.warmup_step:
                 curr_lr = default_args.lr * train_step / default_args.warmup_step
                 optimizer.param_groups = curr_lr
-                if default_args.sample_softmax > 0:
-                    optimizer_sparse.param_groups[0]['lr'] = curr_lr * 2
             else:
                 if default_args.scheduler == 'cosine':
                     scheduler.step(train_step)
-                    if default_args.sample_softmax > 0:
-                        scheduler_sparse.step(train_step)
         elif default_args.scheduler == 'inv_sqrt':
             scheduler.step(train_step)
 
@@ -123,10 +120,14 @@ def benchmark(model, optimizers, schedulers):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='benchmarking script')
-    parser.add_argument('-l', '--n_layers', nargs='+', help='n_layers to test', required=True)
-    parser.add_argument('-d', '--d_models', nargs='+', help='d_models to test', required=True)
-    parser.add_argument('-b', '--batch_sizes', nargs='+', help='batch sizes to test', required=True)
-    parser.add_argument('--fp16', type=str, default=None, choices=["O1", "O2", "O0"])
+    parser.add_argument('-l', '--n_layers', nargs='+',
+                        help='n_layers to test', required=True)
+    parser.add_argument('-d', '--d_models', nargs='+',
+                        help='d_models to test', required=True)
+    parser.add_argument('-b', '--batch_sizes', nargs='+',
+                        help='batch sizes to test', required=True)
+    parser.add_argument('--fp16', type=str, default=None,
+                        choices=["O1", "O2", "O0"])
     parser.add_argument('-t', '--tracking', action="store_true")
     parser.add_argument('--reload', action="store_true")
     args = parser.parse_args()
@@ -149,7 +150,6 @@ if __name__ == "__main__":
                             'div_val': 1,
                             'pre_lnorm': False,
                             'attn_type': 0,
-                            'sample_softmax': -1,
                             'dropout': 0.0,
                             'dropatt': 0.0,
                             'init': 'normal',
@@ -201,7 +201,8 @@ if __name__ == "__main__":
 
     for n_layer, d_model, batch_size in product(args.n_layers, args.d_models, args.batch_sizes):
 
-        n_layer, d_model, batch_size = int(n_layer), int(d_model), int(batch_size)
+        n_layer, d_model, batch_size = int(
+            n_layer), int(d_model), int(batch_size)
         if args.reload:
             if results.get(str((n_layer, d_model, batch_size))) is not None:
                 print(f"{(n_layer, d_model, batch_size)} already in results")
@@ -225,28 +226,34 @@ if __name__ == "__main__":
                                  tie_projs=tie_projs, pre_lnorm=default_args.pre_lnorm, tgt_len=default_args.tgt_len,
                                  ext_len=default_args.ext_len, mem_len=default_args.mem_len, cutoffs=cutoffs,
                                  same_length=default_args.same_length, attn_type=default_args.attn_type,
-                                 clamp_len=default_args.clamp_len, sample_softmax=default_args.sample_softmax)
-        initialization_func = partial(weights_init, init="normal", init_range=0.1, init_std=0.02, proj_init_std=0.01)
+                                 clamp_len=default_args.clamp_len)
+        initialization_func = partial(
+            weights_init, init="normal", init_range=0.1, init_std=0.02, proj_init_std=0.01)
         model.apply(initialization_func)
 
         try:
             tr_iter = corpus.get_iterator('train', batch_size, default_args.tgt_len,
                                           device=device, ext_len=default_args.ext_len)
             para_model = parallelize_model(model, default_args)
-            optimizers = build_optimizer(para_model, default_args, reload=False)
+            optimizers = build_optimizer(
+                para_model, default_args, reload=False)
             optimizer, optimizer_sparse = optimizers
             schedulers = build_scheduler(optimizers, default_args)
             scheduler, scheduler_sparse = schedulers
             if default_args.cuda and args.fp16:
-                para_model, optimizer = amp.initialize(para_model, optimizer, opt_level=args.fp16, verbosity=0)
+                para_model, optimizer = amp.initialize(
+                    para_model, optimizer, opt_level=args.fp16, verbosity=0)
 
-            compute, run_time, processed_tokens = benchmark(para_model, optimizers, schedulers)
+            compute, run_time, processed_tokens = benchmark(
+                para_model, optimizers, schedulers)
             total_time = time.time() - start_time
             print('-' * 130)
             print(f"n_layer {n_layer} d_model {d_model} batch_size {batch_size} fp16 {args.fp16}: " +
-                  "{:.4e} FLOs in {:.4e}s for ".format(compute, run_time) + f"{processed_tokens} tokens, "
-                                                                            f"total time {total_time}")
-            results[str((n_layer, d_model, batch_size))] = compute, run_time, processed_tokens, compute / run_time
+                  "{:.4e} FLOs in {:.4e}s for ".format(
+                      compute, run_time) + f"{processed_tokens} tokens, "
+                  f"total time {total_time}")
+            results[str((n_layer, d_model, batch_size))
+                    ] = compute, run_time, processed_tokens, compute / run_time
 
         except RuntimeError as e:
             print('-' * 100)

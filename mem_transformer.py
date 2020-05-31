@@ -358,10 +358,10 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
 
         # qlen x klen x bsz x n_head
         AC = torch.einsum('ibnd,jbnd->ijbn', (rw_head_q, w_head_k))
-        
+
         # qlen x klen x bsz x n_head
         B_ = torch.einsum('ibnd,jnd->ijbn', (w_head_q, r_emb))
-        
+
         # 1    x klen x 1   x n_head
         D_ = r_bias[None, :, None]
         BD = self._rel_shift(B_ + D_)
@@ -463,8 +463,7 @@ class RelPartialLearnableDecoderLayer(nn.Module):
 
 
 class AdaptiveEmbedding(nn.Module):
-    def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1,
-                 sample_softmax=False):
+    def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1):
         super(AdaptiveEmbedding, self).__init__()
 
         self.n_token = n_token
@@ -481,9 +480,8 @@ class AdaptiveEmbedding(nn.Module):
         self.emb_layers = nn.ModuleList()
         self.emb_projs = nn.ParameterList()
         if div_val == 1:
-            self.emb_layers.append(
-                nn.Embedding(n_token, d_embed, sparse=sample_softmax > 0)
-            )
+            self.emb_layers.append(nn.Embedding(n_token, d_embed)
+                                   )
             if d_proj != d_embed:
                 self.emb_projs.append(nn.Parameter(
                     torch.Tensor(d_proj, d_embed)))
@@ -533,8 +531,7 @@ class MemTransformerLM(nn.Module):
                  div_val=1, tie_projs=[False], pre_lnorm=False,
                  tgt_len=None, ext_len=None, mem_len=None,
                  cutoffs=[], adapt_inp=False,
-                 same_length=False, attn_type=0, clamp_len=-1,
-                 sample_softmax=-1):
+                 same_length=False, attn_type=0, clamp_len=-1):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
 
@@ -583,38 +580,24 @@ class MemTransformerLM(nn.Module):
                         dropatt=dropatt, pre_lnorm=pre_lnorm)
                 )
 
-        self.sample_softmax = sample_softmax
-        # use sampled softmax
-        if sample_softmax > 0:
-            self.out_layer = nn.Linear(d_model, n_token)
-            if tie_weight:
-                self.out_layer.weight = self.word_emb.weight
-            self.tie_weight = tie_weight
-            self.sampler = LogUniformSampler(n_token, sample_softmax)
+        self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
+                                                cutoffs, div_val=div_val)
 
-        # use adaptive softmax (including standard softmax)
-        else:
-            self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
-                                                    cutoffs, div_val=div_val)
+        if tie_weight:
+            for i in range(len(self.crit.out_layers)):
+                self.crit.out_layers[i].weight = self.word_emb.emb_layers[i].weight
 
-            if tie_weight:
-                for i in range(len(self.crit.out_layers)):
-                    self.crit.out_layers[i].weight = self.word_emb.emb_layers[i].weight
-
-            if tie_projs:
-                for i, tie_proj in enumerate(tie_projs):
-                    if tie_proj and div_val == 1 and d_model != d_embed:
-                        self.crit.out_projs[i] = self.word_emb.emb_projs[0]
-                    elif tie_proj and div_val != 1:
-                        self.crit.out_projs[i] = self.word_emb.emb_projs[i]
+        if tie_projs:
+            for i, tie_proj in enumerate(tie_projs):
+                if tie_proj and div_val == 1 and d_model != d_embed:
+                    self.crit.out_projs[i] = self.word_emb.emb_projs[0]
+                elif tie_proj and div_val != 1:
+                    self.crit.out_projs[i] = self.word_emb.emb_projs[i]
 
         self.same_length = same_length
         self.clamp_len = clamp_len
 
         self._create_params()
-
-    def backward_compatible(self):
-        self.sample_softmax = -1
 
     def _create_params(self):
         if self.attn_type == 0:  # default attention
@@ -786,15 +769,9 @@ class MemTransformerLM(nn.Module):
         hidden, new_mems = self._forward(data, mems=mems)
 
         pred_hid = hidden[-tgt_len:]
-        if self.sample_softmax > 0 and self.training:
-            assert self.tie_weight
-            logit = sample_logits(self.word_emb,
-                                  self.out_layer.bias, target, pred_hid, self.sampler)
-            loss = -F.log_softmax(logit, -1)[:, :, 0]
-        else:
-            loss = self.crit(
-                pred_hid.reshape(-1, pred_hid.size(-1)), target.reshape(-1))
-            loss = loss.view(tgt_len, -1)
+        loss = self.crit(
+            pred_hid.reshape(-1, pred_hid.size(-1)), target.reshape(-1))
+        loss = loss.view(tgt_len, -1)
 
         if new_mems is None:
             return [loss]

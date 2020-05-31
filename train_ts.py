@@ -61,30 +61,10 @@ def parallelize_model(model, args):
 def build_optimizer(model, args, reload=False):
     optimizer_sparse = None
     if args.optim.lower() == 'sgd':
-        if args.sample_softmax > 0:
-            dense_params, sparse_params = [], []
-            for param in model.parameters():
-                if param.size() == model.word_emb.weight.size():
-                    sparse_params.append(param)
-                else:
-                    dense_params.append(param)
-            optimizer_sparse = optim.SGD(sparse_params, lr=args.lr * 2)
-            optimizer = optim.SGD(dense_params, lr=args.lr, momentum=args.mom)
-        else:
-            optimizer = optim.SGD(model.parameters(), lr=args.lr,
-                                  momentum=args.mom)
+        optimizer = optim.SGD(model.parameters(), lr=args.lr,
+                              momentum=args.mom)
     elif args.optim.lower() == 'adam':
-        if args.sample_softmax > 0:
-            dense_params, sparse_params = [], []
-            for param in model.parameters():
-                if param.size() == model.word_emb.weight.size():
-                    sparse_params.append(param)
-                else:
-                    dense_params.append(param)
-            optimizer_sparse = optim.SparseAdam(sparse_params, lr=args.lr)
-            optimizer = optim.Adam(dense_params, lr=args.lr)
-        else:
-            optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
     elif args.optim.lower() == 'adagrad':
         optimizer = optim.Adagrad(model.parameters(), lr=args.lr)
     else:
@@ -125,10 +105,6 @@ def build_scheduler(optimizers, args):
         # rather than the default value of lr_min 1e-6
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer,
                                                          args.max_step, eta_min=args.eta_min)  # should use eta_min arg
-        if args.sample_softmax > 0:
-            scheduler_sparse = optim.lr_scheduler.CosineAnnealingLR(optimizer_sparse,
-                                                                    args.max_step,
-                                                                    eta_min=args.eta_min)  # should use eta_min arg
     elif args.scheduler == 'inv_sqrt':
         # originally used for Transformer (in Attention is all you need)
         def lr_lambda(step):
@@ -144,10 +120,6 @@ def build_scheduler(optimizers, args):
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer,
                                                          factor=args.decay_rate, patience=args.patience,
                                                          min_lr=args.lr_min)
-        if args.sample_softmax > 0:
-            scheduler_sparse = optim.lr_scheduler.ReduceLROnPlateau(optimizer_sparse,
-                                                                    factor=args.decay_rate, patience=args.patience,
-                                                                    min_lr=args.lr_min)
     elif args.scheduler == 'constant':
         pass
 
@@ -264,8 +236,6 @@ def epoch_loop(epoch, model, optimizers, schedulers):
         optimizer.step()
         parent_model.compute += openai_compute(
             non_emb_param_count(parent_model, ntokens), data.numel(), 1)
-        if args.sample_softmax > 0:
-            optimizer_sparse.step()
 
         # step-wise learning rate annealing
         train_step += 1
@@ -283,13 +253,9 @@ def epoch_loop(epoch, model, optimizers, schedulers):
             if train_step < args.warmup_step:
                 curr_lr = args.lr * train_step / args.warmup_step
                 optimizer.param_groups = curr_lr
-                if args.sample_softmax > 0:
-                    optimizer_sparse.param_groups[0]['lr'] = curr_lr * 2
             else:
                 if args.scheduler == 'cosine':
                     scheduler.step(train_step)
-                    if args.sample_softmax > 0:
-                        scheduler_sparse.step(train_step)
         elif args.scheduler == 'inv_sqrt':
             scheduler.step(train_step)
 
@@ -339,23 +305,11 @@ def epoch_loop(epoch, model, optimizers, schedulers):
             # dev-performance based learning rate annealing
             if args.scheduler == 'dev_perf':
                 scheduler.step(val_loss)
-                if args.sample_softmax > 0:
-                    scheduler_sparse.step(val_loss)
 
             eval_start_time = time.time()
 
         if train_step == args.max_step:
             break
-
-
-def conditional_slack_sender(condition):
-    def conditioned(func):
-        if condition:
-            return slack_sender(webhook_url=webhook_url, channel="Teven")(func)
-        else:
-            return func
-
-    return conditioned
 
 
 def expand_model(strategy, integration, integration_length, n_add,
@@ -383,11 +337,12 @@ def expand_model(strategy, integration, integration_length, n_add,
     # expansion
     logging(
         f"adding {n_add} layers before starting epoch {epoch} with method {strategy}")
-    new_layers = model.expand_layers(
-        n_add, strategy=strategy, function=initialization_func)
+    new_layers = model.expand_layers(n_add, strategy=strategy,
+                                     function=initialization_func)
 
     # optimizer update
-    optimizer.add_param_group({'params': new_layers.parameters(), 'lr': optimizer.param_groups[0]["lr"],
+    optimizer.add_param_group({'params': new_layers.parameters(),
+                               'lr': optimizer.param_groups[0]["lr"],
                                'initial_lr': optimizer.param_groups[0]["initial_lr"]})
     scheduler.base_lrs.append(optimizer.param_groups[-1]["initial_lr"])
 
@@ -526,13 +481,9 @@ def fit_to_previous_model(model, new_layers, tr_iter, first_logits,
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
         distil_optimizer.step()
-        if args.sample_softmax > 0:
-            distil_optimizer_sparse.step()
 
 
 if __name__ == "__main__":
-
-    webhook_url = open("slack_webhook.txt").read()
 
     args = parser.parse_args()
     args.tied = not args.not_tied
@@ -651,17 +602,22 @@ if __name__ == "__main__":
         model.apply(update_dropout)
         model.apply(update_dropatt)
     else:
-        model = MemTransformerLM(ntokens, args.n_layer, args.n_head, args.d_model,
-                                 args.d_head, args.d_inner, args.dropout, args.dropatt,
-                                 tie_weight=args.tied, d_embed=args.d_embed, div_val=args.div_val,
-                                 tie_projs=tie_projs, pre_lnorm=args.pre_lnorm, tgt_len=args.tgt_len,
-                                 ext_len=args.ext_len, mem_len=args.mem_len, cutoffs=cutoffs,
-                                 same_length=args.same_length, attn_type=args.attn_type,
-                                 clamp_len=args.clamp_len, sample_softmax=args.sample_softmax)
+        model = MemTransformerLM(ntokens, args.n_layer, args.n_head,
+                                rgs.d_model, args.d_head, args.d_inner,
+                                args.dropout, args.dropatt,
+                                tie_weight=args.tied, d_embed=args.d_embed,
+                                div_val=args.div_val, tie_projs=tie_projs,
+                                pre_lnorm=args.pre_lnorm, tgt_len=args.tgt_len,
+                                ext_len=args.ext_len, mem_len=args.mem_len,
+                                cutoffs=cutoffs, same_length=args.same_length,
+                                attn_type=args.attn_type,
+                                clamp_len=args.clamp_len)
         model.apply(initialization_func)
+
         # debug
         # model.word_emb.apply(initialization_func)
-        # ensure embedding init is not overridden by out_layer in case of weight sharing
+        # ensure embedding init is not overridden by out_layer in case of
+        # weight sharing
     args.n_all_param = sum([p.nelement() for p in model.parameters()])
     args.n_nonemb_param = non_emb_param_count(model, ntokens)
 
@@ -700,7 +656,8 @@ if __name__ == "__main__":
 
     # Loop over epochs.
     if args.reset_lr:
-        # then they're different and we use train_step only for the new lr scheduling
+        # then they're different and we use train_step only for the new lr
+        # scheduling
         train_step = 0
         optimizer.defaults["lr"] = args.lr
         for param_group in optimizer.param_groups:
@@ -717,15 +674,15 @@ if __name__ == "__main__":
     log_start_time = time.time()
     eval_start_time = time.time()
 
-    # we define it here for the conditional knockknock call
-    @conditional_slack_sender(args.knockknock)
     def run_training():
         for epoch in itertools.count(start=first_epoch):
-            # we check before the training loop; expanding at epoch 0 means before training (for debug purposes)
+            # we check before the training loop; expanding at epoch 0 means
+            # before training (for debug purposes)
             if args.expand and str(epoch - 1) in args.expansion_dict:
                 n_add = int(args.expansion_dict[str(epoch - 1)])
-                expand_model(args.expand, args.integration, args.integration_length,
-                             n_add, model, optimizers, schedulers, tr_iter, va_iter, epoch, train_step)
+                expand_model(args.expand, args.integration,
+                             args.integration_length, n_add, model, optimizers,
+                             schedulers, tr_iter, va_iter, epoch, train_step)
             if args.widen and str(epoch - 1) in args.widen_dict:
                 ratio = int(args.widen_dict[str(epoch - 1)])
                 widen_model(args.widen, ratio, model, optimizers,
@@ -739,7 +696,8 @@ if __name__ == "__main__":
                 if epoch <= args.log_first_epochs:
                     logging(f"saving model at the end of epoch {epoch}")
                     if args.fp16:
-                        with open(os.path.join(args.work_dir, f'amp_checkpoint_{epoch}.pt'), 'wb') as f:
+                        with open(os.path.join(args.work_dir,
+                                               f'amp_checkpoint_{epoch}.pt'), 'wb') as f:
                             checkpoint = {
                                 'model': model.state_dict(),
                                 'optimizer': optimizer.state_dict(),
@@ -747,9 +705,11 @@ if __name__ == "__main__":
                             }
                             torch.save(checkpoint, f)
                     else:
-                        with open(os.path.join(args.work_dir, f'model_{epoch}.pt'), 'wb') as f:
+                        with open(os.path.join(args.work_dir,
+                                               f'model_{epoch}.pt'), 'wb') as f:
                             torch.save(model, f)
-                        with open(os.path.join(args.work_dir, f'optimizer_{epoch}.pt'), 'wb') as f:
+                        with open(os.path.join(args.work_dir,
+                                               f'optimizer_{epoch}.pt'), 'wb') as f:
                             torch.save(optimizer.state_dict(), f)
 
     # At any point you can hit Ctrl + C to break out of training early.

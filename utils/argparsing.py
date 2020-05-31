@@ -46,9 +46,6 @@ parser.add_argument('--pre_lnorm', action='store_true',
 parser.add_argument('--attn_type', type=int, default=0,
                     help='attention type. 0 for ours, 1 for Shaw et al,'
                          '2 for Vaswani et al, 3 for Al Rfou et al.')
-parser.add_argument('--sample_softmax', type=int, default=-1,
-                    help='number of samples in sampled softmax')
-
 parser.add_argument('--dropout', type=float, default=0.0,
                     help='global dropout rate')
 parser.add_argument('--dropatt', type=float, default=0.0,
@@ -142,9 +139,6 @@ parser.add_argument('--finetune_v3', action='store_true',
 
 parser.add_argument('--wandb', type=str, default=None,
                     help='Use weights and biases logging.')
-parser.add_argument('--knockknock', action="store_true",
-                    help='Use knockknock alerts')
-
 parser.add_argument('--log_first_epochs', type=int, default=0,
                     help='number of first epochs to log')
 parser.add_argument('--restart_from', type=int, default=None,
