@@ -37,9 +37,9 @@ parser.add_argument('--batch_chunk', type=int, default=1,
                     help='split batch into chunks to save memory')
 
 parser.add_argument('--not_tied', action='store_true',
-                    help='do not tie the word embedding and softmax weights')
+                    help='do not tie the word embedding and sigmoid weights')
 parser.add_argument('--div_val', type=int, default=1,
-                    help='divident value for adapative input and softmax')
+                    help='divident value for adapative input and sigmoid')
 parser.add_argument('--pre_lnorm', action='store_true',
                     help='apply LayerNorm to the input instead of the output')
 parser.add_argument('--attn_type', type=int, default=0,

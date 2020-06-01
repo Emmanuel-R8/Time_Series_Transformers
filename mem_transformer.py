@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.log_uniform_sampler import LogUniformSampler, sample_logits
+from utils.proj_adaptive_sigmoid import ProjectedAdaptiveSigmoid
 
 
 class PositionalEmbedding(nn.Module):
@@ -121,7 +122,7 @@ class MultiHeadAttn(nn.Module):
                     attn_mask[:, :, :, None], -float('inf'))
 
         # [qlen x klen x bsz x n_head]
-        attn_prob = F.softmax(attn_score, dim=1)
+        attn_prob = F.sigmoid(attn_score, dim=1)
         attn_prob = self.dropatt(attn_prob)
 
         # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head] -> [qlen x bsz x n_head x d_head]
@@ -285,7 +286,7 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
                     attn_mask[:, None, :, :], -float('inf'))
 
         # [bsz x n_head x qlen x klen]
-        attn_prob = F.softmax(attn_score, dim=3)
+        attn_prob = F.sigmoid(attn_score, dim=3)
         attn_prob = self.dropatt(attn_prob)
 
         # compute attention vector
@@ -379,7 +380,7 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
                     attn_mask[:, :, :, None], -float('inf'))
 
         # [qlen x klen x bsz x n_head]
-        attn_prob = F.softmax(attn_score, dim=1)
+        attn_prob = F.sigmoid(attn_score, dim=1)
         attn_prob = self.dropatt(attn_prob)
 
         # compute attention vector
@@ -516,8 +517,8 @@ class MemTransformerLM(nn.Module):
                         dropatt=dropatt, pre_lnorm=pre_lnorm)
                 )
 
-#        self.crit = ProjectedAdaptiveLogSoftmax(n_token, d_embed, d_model,
-#                                                cutoffs, div_val=div_val)
+        self.crit = ProjectedAdaptiveSigmoid(n_token, d_embed, d_model,
+                                             cutoffs, div_val=div_val)
 
         if tie_weight:
             for i in range(len(self.crit.out_layers)):

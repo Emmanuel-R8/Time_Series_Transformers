@@ -87,7 +87,8 @@ def build_optimizer(model, args, reload=False):
                 except:
                     logging("merging optimizer param groups")
                     opt_state_dict["param_groups"][0]["params"] = \
-                            [param for param_group in opt_state_dict["param_groups"] for param in param_group["params"]]
+                        [param for param_group in opt_state_dict["param_groups"]
+                            for param in param_group["params"]]
                     opt_state_dict["param_groups"] = [
                         opt_state_dict["param_groups"][0]]
                     optimizer.load_state_dict(opt_state_dict)
@@ -148,7 +149,7 @@ def evaluate(eval_iter, model):
     # else:
     #     model.reset_length(default_args.eval_tgt_len,
     #                        default_args.ext_len, default_args.mem_len +
-    #                       default_args.tgt_len - default_args.eval_tgt_len)   
+    #                       default_args.tgt_len - default_args.eval_tgt_len)
 
     # Evaluation
     total_len, total_loss = 0, 0.
@@ -201,6 +202,9 @@ def epoch_loop(epoch, model, optimizers, schedulers):
     else:
         mems = tuple()
     train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
+
+    log_start_time = time.time()
+    best_val_loss = float(inf)
     for batch, (data, target, seq_len) in enumerate(train_iter):
         model.zero_grad()
         if args.batch_chunk > 1:
@@ -252,7 +256,7 @@ def epoch_loop(epoch, model, optimizers, schedulers):
                 for parameter in parent_model.parameters():
                     parameter.requires_grad = True
                 logging("thawing all parameters")
-        
+
         if args.scheduler in ['cosine', 'constant', 'dev_perf']:
             # linear warmup stage
             if train_step < args.warmup_step:
@@ -291,6 +295,7 @@ def epoch_loop(epoch, model, optimizers, schedulers):
             # Save the model if the validation loss is the best we've seen so
             # far.
             if not best_val_loss or val_loss < best_val_loss:
+                best_val_loss = val_loss
                 if not args.debug:
                     if args.fp16:
                         with open(os.path.join(args.work_dir,
@@ -303,12 +308,11 @@ def epoch_loop(epoch, model, optimizers, schedulers):
                             torch.save(checkpoint, f)
                     else:
                         with open(os.path.join(args.work_dir,
-                                  'model.pt'), 'wb') as f:
+                                               'model.pt'), 'wb') as f:
                             torch.save(parent_model, f)
                         with open(os.path.join(args.work_dir,
-                                  'optimizer.pt'), 'wb') as f:
+                                               'optimizer.pt'), 'wb') as f:
                             torch.save(optimizer.state_dict(), f)
-                best_val_loss = val_loss
 
             # dev-performance based learning rate annealing
             if args.scheduler == 'dev_perf':
@@ -350,8 +354,8 @@ def expand_model(strategy, integration, integration_length, n_add,
 
     # optimizer update
     optimizer.add_param_group({'params': new_layers.parameters(),
-                        'lr': optimizer.param_groups[0]["lr"],
-                        'initial_lr': optimizer.param_groups[0]["initial_lr"]})
+                               'lr': optimizer.param_groups[0]["lr"],
+                               'initial_lr': optimizer.param_groups[0]["initial_lr"]})
     scheduler.base_lrs.append(optimizer.param_groups[-1]["initial_lr"])
 
     # training loop for reverse distillation
@@ -584,15 +588,15 @@ if __name__ == "__main__":
         model.apply(update_dropatt)
     else:
         model = MemTransformerLM(ntokens, args.n_layer, args.n_head,
-                                rgs.d_model, args.d_head, args.d_inner,
-                                args.dropout, args.dropatt,
-                                tie_weight=args.tied, d_embed=args.d_embed,
-                                div_val=args.div_val, tie_projs=tie_projs,
-                                pre_lnorm=args.pre_lnorm, tgt_len=args.tgt_len,
-                                ext_len=args.ext_len, mem_len=args.mem_len,
-                                cutoffs=cutoffs, same_length=args.same_length,
-                                attn_type=args.attn_type,
-                                clamp_len=args.clamp_len)
+                                 args.d_model, args.d_head, args.d_inner,
+                                 args.dropout, args.dropatt,
+                                 tie_weight=args.tied, d_embed=args.d_embed,
+                                 div_val=args.div_val, tie_projs=tie_projs,
+                                 pre_lnorm=args.pre_lnorm, tgt_len=args.tgt_len,
+                                 ext_len=args.ext_len, mem_len=args.mem_len,
+                                 cutoffs=cutoffs, same_length=args.same_length,
+                                 attn_type=args.attn_type,
+                                 clamp_len=args.clamp_len)
         model.apply(initialization_func)
 
         # debug
