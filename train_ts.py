@@ -204,7 +204,7 @@ def epoch_loop(epoch, model, optimizers, schedulers):
     train_iter = tr_iter.get_varlen_iter() if args.varlen else tr_iter
 
     log_start_time = time.time()
-    best_val_loss = float(inf)
+    best_val_loss = float('Infinity')
     for batch, (data, target, seq_len) in enumerate(train_iter):
         model.zero_grad()
         if args.batch_chunk > 1:
