@@ -50,19 +50,19 @@ class PositionwiseFF(nn.Module):
 
         self.pre_lnorm = pre_lnorm
 
-    def forward(self, inp):
+    def forward(self, input):
         if self.pre_lnorm:
             # layer normalization + positionwise feed-forward
-            core_out = self.CoreNet(self.layer_norm(inp))
+            core_out = self.CoreNet(self.layer_norm(input))
 
             # residual connection
-            output = core_out + inp
+            output = core_out + input
         else:
             # positionwise feed-forward
-            core_out = self.CoreNet(inp)
+            core_out = self.CoreNet(input)
 
             # residual connection + layer normalization
-            output = self.layer_norm(inp + core_out)
+            output = self.layer_norm(input + core_out)
 
         return output
 
@@ -259,7 +259,6 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         r_head_k = r_head_k.view(rlen, self.n_head, self.d_head)
 
         # compute attention score
-
         # qlen x bsz x n_head x d_head
         rw_head_q = w_head_q + r_w_bias
 
@@ -335,12 +334,18 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
                 w_heads = self.qkv_net(self.layer_norm(w))
             else:
                 w_heads = self.qkv_net(w)
+
             w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
 
         klen = w_head_k.size(0)
 
+        # qlen x bsz x n_head x d_head
         w_head_q = w_head_q.view(qlen, bsz, self.n_head, self.d_head)
+
+        # qlen x bsz x n_head x d_head
         w_head_k = w_head_k.view(klen, bsz, self.n_head, self.d_head)
+
+        # qlen x bsz x n_head x d_head
         w_head_v = w_head_v.view(klen, bsz, self.n_head, self.d_head)
 
         if klen > r_emb.size(0):
@@ -619,7 +624,9 @@ class MemTransformerLM(nn.Module):
         dec_attn_mask = dec_attn_mask.bool()  # Convert to bool
 
         hids = []
-        if self.attn_type == 0:  # default
+
+        # Default
+        if self.attn_type == 0:
             pos_seq = torch.arange(klen-1, -1, -1.0, device=word_emb.device,
                                    dtype=word_emb.dtype)
             if self.clamp_len > 0:
@@ -635,7 +642,9 @@ class MemTransformerLM(nn.Module):
                 core_out = layer(core_out, pos_emb, self.r_w_bias,
                                  self.r_r_bias, dec_attn_mask=dec_attn_mask, mems=mems_i)
                 hids.append(core_out)
-        elif self.attn_type == 1:  # learnable
+
+        # Learnable embeddings
+        elif self.attn_type == 1:  
             core_out = self.drop(word_emb)
             hids.append(core_out)
             for i, layer in enumerate(self.layers):
@@ -649,7 +658,9 @@ class MemTransformerLM(nn.Module):
                 core_out = layer(core_out, r_emb, self.r_w_bias[i],
                                  r_bias, dec_attn_mask=dec_attn_mask, mems=mems_i)
                 hids.append(core_out)
-        elif self.attn_type == 2:  # absolute
+
+        # Absolute standard
+        elif self.attn_type == 2:  
             pos_seq = torch.arange(klen - 1, -1, -1.0, device=word_emb.device,
                                    dtype=word_emb.dtype)
             if self.clamp_len > 0:
@@ -666,6 +677,8 @@ class MemTransformerLM(nn.Module):
                 core_out = layer(core_out, dec_attn_mask=dec_attn_mask,
                                  mems=mems_i)
                 hids.append(core_out)
+
+        # Absolute Deeper SA
         elif self.attn_type == 3:
             core_out = self.drop(word_emb)
 
