@@ -239,9 +239,14 @@ class Corpus(object):
 
 
 def get_lm_corpus(datadir, dataset):
+    print('Loading cached dataset for: ')
+    print(f'   datadir: {datadir}')
+    print(f'   dataset: {dataset}')
+
     fn = os.path.join(datadir, 'cache.pt')
+    print(f'   cache path: {fn}')
+
     if os.path.exists(fn):
-        print('Loading cached dataset...')
         corpus = torch.load(fn)
     else:
         print('Producing dataset {}...'.format(dataset))

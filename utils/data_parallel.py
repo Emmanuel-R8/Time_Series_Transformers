@@ -16,7 +16,7 @@ def scatter(inputs, target_gpus, chunk_sizes, dim=0):
                 return Scatter.apply(target_gpus, chunk_sizes, dim, obj)
             except:
                 print('obj', obj.size())
-                print('dim', dim)
+                print('dim', dim) 
                 print('chunk_sizes', chunk_sizes)
                 quit()
         if isinstance(obj, tuple) and len(obj) > 0:

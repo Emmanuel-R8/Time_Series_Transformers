@@ -7,11 +7,10 @@ def main():
     t_slider = st.empty()
     budget_slider = st.empty()
     flo_slider = st.empty()
-    t = t_slider.slider('Wall time')
-    budget = budget_slider.slider('Total cost (GCP)')
-    flo = flo_slider.slider('Floating-point operations (FLOs)')
+    t = t_slider.slider("Wall time")
+    budget = budget_slider.slider("Total cost (GCP)")
+    flo = flo_slider.slider("Floating-point operations (FLOs)")
     flo = t
-
 
 
 if __name__ == "__main__":
