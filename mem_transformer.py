@@ -13,23 +13,36 @@ from utils.proj_adaptive_sigmoid import ProjectedAdaptiveSigmoid
 
 
 class PositionalEmbedding(nn.Module):
-    def __init__(self, demb):
+    def __init__(self, d_pos_emb):
         super(PositionalEmbedding, self).__init__()
 
-        self.demb = demb
+        self.d_pos_emb = d_pos_emb
 
-        inv_freq = 1 / (10000 ** (torch.arange(0.0, demb, 2.0) / demb))
+        # Instead of writing sin(x / f) will use sin(x * inv_freq)
+        # Frequencies range from 1 to 10000**2, sort of exponential progression with exactly d_pos_emb frequencies
+        inv_freq = 1 / (10000 ** (torch.arange(0.0, d_pos_emb, 2.0) / d_pos_emb))
+        # inv_freq = inv_freq.rename('InvFreq') unsupported by torch.ger
+
+        # Register this variable as a constant
         self.register_buffer("inv_freq", inv_freq)
 
     def forward(self, pos_seq, bsz=None):
+
+        # torch.ger = outer product
+        # DIMS: pos_seq x d_pos_emb
         sinusoid_inp = torch.ger(pos_seq, self.inv_freq)
+
+        # DIMS: pos_seq x (2 x d_pos_emb)
         pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
 
         if bsz is not None:
-            return pos_emb[:, None, :].expand(-1, bsz, -1)
+            pos_emb = pos_emb[:, None, :].expand(-1, bsz, -1)
+            pos_emb = pos_emb.rename('PosSeq', 'Batch', 'PosEmb')
         else:
             return pos_emb[:, None, :]
+            pos_emb = pos_emb.rename('PosSeq', 'Batch', 'PosEmb')
 
+        return pos_emb
 
 class PositionwiseFF(nn.Module):
     def __init__(self, d_model, d_inner, dropout, pre_lnorm=False):
