@@ -22,7 +22,6 @@ parser.add_argument(
     choices=["wt103", "lm1b", "enwik8", "text8"],
     help="dataset name",
 )
-
 parser.add_argument("--n_layer", type=int, default=12, help="number of total layers")
 parser.add_argument("--n_head", type=int, default=10, help="number of heads")
 parser.add_argument("--d_head", type=int, default=50, help="head dimension")
