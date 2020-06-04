@@ -53,38 +53,27 @@ class PositionwiseFF(nn.Module):
         self.d_inner = d_inner
         self.dropout = dropout
 
-        # DIMS: d_model x d_model
         self.CoreNet = nn.Sequential(
-            # DIMS: d_model x d_inner
             nn.Linear(d_model, d_inner),
-            # DIMS: d_inner
             nn.ReLU(inplace=True),
-            # DIMS: d_inner
             nn.Dropout(dropout),
-            # DIMS: d_inner x d_model
             nn.Linear(d_inner, d_model),
-            # DIMS: d_model
             nn.Dropout(dropout),
         )
 
-        # DIMS: d_model
         self.layer_norm = nn.LayerNorm(d_model)
 
         self.pre_lnorm = pre_lnorm
 
     def forward(self, input):
-        assert input.size()[0] == self.d_model
-
         if self.pre_lnorm:
             # layer normalization + positionwise feed-forward
-            # DIMS: d_model x d_model
             core_out = self.CoreNet(self.layer_norm(input))
 
             # residual connection
             output = core_out + input
         else:
             # positionwise feed-forward
-            # DIMS: d_model x d_model
             core_out = self.CoreNet(input)
 
             # residual connection + layer normalization
@@ -111,7 +100,7 @@ class MultiHeadAttn(nn.Module):
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
 
-        # DIMS: n_head*d_head x d_model
+        # DIMS: d_model x n_head*d_head
         self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
 
         # DIMS: d_model
@@ -157,7 +146,7 @@ class MultiHeadAttn(nn.Module):
         attn_prob = F.sigmoid(attn_score, dim=1)
         attn_prob = self.dropatt(attn_prob)
 
-        # [qlen x klen x bsz x n_head] x [klen x bsz x n_head x d_head] ->
+        # [qlen x klen x bsz x n_head] x [klen x bsz x n_head x d_head] -> 
         # [qlen x bsz x n_head x d_head]
         attn_vec = torch.einsum("ijbn,jbnd->ibnd", (attn_prob, head_v))
         attn_vec = attn_vec.contiguous().view(
@@ -165,7 +154,6 @@ class MultiHeadAttn(nn.Module):
         )
 
         # linear projection
-        # DIMS: n_head*d_head x d_model
         attn_out = self.o_net(attn_vec)
         attn_out = self.drop(attn_out)
 
@@ -202,11 +190,10 @@ class RelMultiHeadAttn(nn.Module):
         # DIMS: d_model x 3*n_head*d_head
         self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
 
-        # DIMS:
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
 
-        # DIMS: n_head*d_head x d_model
+        # DIMS: d_model x n_head*d_head
         self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
 
         # DIMS: d_model
@@ -280,22 +267,10 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
 
         if mems is not None:
-            assert mems.size()[1] == w.size()[1]
-
-            # Concatenate memories + current segment along 1st dimension
-            # DIMS: mems -> n_mem x d_model
-            # DIMS: w ->    n_model x d_model
-            # DIMS: cat ->  (n_mem+n_model) x d_model
             cat = torch.cat([mems, w], 0)
             if self.pre_lnorm:
-                # DIMS: cat ->     (n_mem+n_model) x d_model
-                # DIMS: qkc_net -> d_model x 3*n_head*d_head
-                # DIMS: w_heads -> (n_mem+n_model) x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(cat))
             else:
-                # DIMS: cat ->     (n_mem+n_model) x d_model
-                # DIMS: qkc_net -> d_model x 3*n_head*d_head
-                # DIMS: w_heads -> (n_mem+n_model) x 3*n_head*d_head
                 w_heads = self.qkv_net(cat)
             r_head_k = self.r_net(r)
 
@@ -303,10 +278,8 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
             w_head_q = w_head_q[-qlen:]
         else:
             if self.pre_lnorm:
-                # DIMS: d_model x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(w))
             else:
-                # DIMS: d_model x 3*n_head*d_head
                 w_heads = self.qkv_net(w)
             r_head_k = self.r_net(r)
 
@@ -363,7 +336,6 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         )
 
         # linear projection
-        # DIMS: n_head*d_head x d_model
         attn_out = self.o_net(attn_vec)
         attn_out = self.drop(attn_out)
 
@@ -391,20 +363,16 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
         if mems is not None:
             cat = torch.cat([mems, w], 0)
             if self.pre_lnorm:
-                # DIMS: d_model x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(cat))
             else:
-                # DIMS: d_model x 3*n_head*d_head
                 w_heads = self.qkv_net(cat)
             w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
 
             w_head_q = w_head_q[-qlen:]
         else:
             if self.pre_lnorm:
-                # DIMS: d_model x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(w))
             else:
-                # DIMS: d_model x 3*n_head*d_head
                 w_heads = self.qkv_net(w)
 
             w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
@@ -467,7 +435,6 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
         )
 
         # linear projection
-        # DIMS: n_head*d_head x d_model
         attn_out = self.o_net(attn_vec)
         attn_out = self.drop(attn_out)
 
@@ -523,12 +490,9 @@ class RelPartialLearnableDecoderLayer(nn.Module):
     def __init__(self, n_head, d_model, d_head, d_inner, dropout, **kwargs):
         super(RelPartialLearnableDecoderLayer, self).__init__()
 
-        # DIMS: d_model x n_head*d_head
         self.dec_attn = RelPartialLearnableMultiHeadAttn(
             n_head, d_model, d_head, dropout, **kwargs
         )
-
-        # DIMS: d_model x d_model
         self.pos_ff = PositionwiseFF(
             d_model, d_inner, dropout, pre_lnorm=kwargs.get("pre_lnorm")
         )

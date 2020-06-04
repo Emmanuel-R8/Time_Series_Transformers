@@ -8,7 +8,7 @@ d_pos_emb = 5
 # Frequencies range from 1 to 10000
 inv_freq = 1 / (10000 ** (torch.arange(0.0, d_pos_emb, 2.0 / d_pos_emb)))
 
-inv_freq.size()
+inv_freq.size()[1]
 # DIMS:
 
 
@@ -26,8 +26,11 @@ pos_emb.size()
 
 #%%
 
+bsz = 4
+
 if bsz is not None:
     pos_emb = pos_emb[:, None, :].expand(-1, bsz, -1)
     pos_emb = pos_emb.rename("PosSin", "Batch", "PosCos")
 else:
-    return pos_emb[:, None, :]
+    pos_emb = pos_emb[:, None, :]
+
