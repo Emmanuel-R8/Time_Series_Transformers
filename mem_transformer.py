@@ -267,18 +267,29 @@ class RelMultiHeadAttn(nn.Module):
         return x
 
     def _rel_shift(self, x, zero_triu=False):
+        # Create a block of zeros that will be added along the 4th dimension
+        # DIMS: x0 x x1 x x2 x 1
         zero_pad = torch.zeros(
             (x.size(0), x.size(1), x.size(2), 1), device=x.device, dtype=x.dtype
         )
+
+        # Add along the 4th dimension
+        # DIMS: x0 x x1 x x2 x (x3 + 1)
         x_padded = torch.cat([zero_pad, x], dim=3)
 
-        x_padded = x_padded.view(x.size(0), x.size(1), x.size(3) + 1, x.size(2))
+        # CHECK: Those 2 lines makes little sense
+        # x_padded = x_padded.view(x.size(0), x.size(1), x.size(3) + 1, x.size(2))
+        # x = x_padded[:, :, 1:].view_as(x)
 
-        x = x_padded[:, :, 1:].view_as(x)
+        # This version retains the original shape of x
+        # DIMS: x0 x x1 x x2 x x3
+        x = x_padded[:, :, :, 1:].view_as(x)
 
         if zero_triu:
             ones = torch.ones((x.size(2), x.size(3)))
-            x = x * torch.tril(ones, x.size(3) - x.size(2))[None, None, :, :]
+
+            # Return a lower triangular matrix
+            x = x * torch.tril(ones, diagonal=x.size(3) - x.size(2))[None, None, :, :]
 
         return x
 
