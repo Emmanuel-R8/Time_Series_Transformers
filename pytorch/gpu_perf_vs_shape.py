@@ -13,7 +13,7 @@ from apex import amp
 from data_utils import get_lm_corpus
 from mem_transformer import MemTransformerLM
 from utils.initialization import weights_init
-from train import parallelize_model, build_optimizer, build_scheduler
+from train_ts import parallelize_model, build_optimizer, build_scheduler
 from utils.torch_utils import non_emb_param_count, openai_compute
 
 

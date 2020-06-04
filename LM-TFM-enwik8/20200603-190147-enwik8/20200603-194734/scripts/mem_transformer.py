@@ -37,13 +37,12 @@ class PositionalEmbedding(nn.Module):
 
         if bsz is not None:
             pos_emb = pos_emb[:, None, :].expand(-1, bsz, -1)
-            pos_emb = pos_emb.rename("PosSeq", "Batch", "PosEmb")
+            pos_emb = pos_emb.rename('PosSeq', 'Batch', 'PosEmb')
         else:
             return pos_emb[:, None, :]
-            pos_emb = pos_emb.rename("PosSeq", "Batch", "PosEmb")
+            pos_emb = pos_emb.rename('PosSeq', 'Batch', 'PosEmb')
 
         return pos_emb
-
 
 class PositionwiseFF(nn.Module):
     def __init__(self, d_model, d_inner, dropout, pre_lnorm=False):
@@ -91,19 +90,13 @@ class MultiHeadAttn(nn.Module):
         self.d_head = d_head
         self.dropout = dropout
 
-        # DIMS: d_model x n_head*d_head
         self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
-
-        # DIMS: d_model x 2*n_head*d_head
         self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
 
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
-
-        # DIMS: d_model x n_head*d_head
         self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
 
-        # DIMS: d_model
         self.layer_norm = nn.LayerNorm(d_model)
 
         self.scale = 1 / (d_head ** 0.5)
@@ -123,10 +116,7 @@ class MultiHeadAttn(nn.Module):
             # layer normalization
             c = self.layer_norm(c)
 
-        # DIMS: q_net -> d_model x n_head * d_head
         head_q = self.q_net(h)
-
-        # DIMS: kv_net -> d_model x 2*n_head*d_head
         head_k, head_v = torch.chunk(self.kv_net(c), 2, -1)
 
         head_q = head_q.view(h.size(0), h.size(1), self.n_head, self.d_head)
@@ -146,8 +136,7 @@ class MultiHeadAttn(nn.Module):
         attn_prob = F.sigmoid(attn_score, dim=1)
         attn_prob = self.dropatt(attn_prob)
 
-        # [qlen x klen x bsz x n_head] x [klen x bsz x n_head x d_head] -> 
-        # [qlen x bsz x n_head x d_head]
+        # [qlen x klen x bsz x n_head] + [klen x bsz x n_head x d_head] -> [qlen x bsz x n_head x d_head]
         attn_vec = torch.einsum("ijbn,jbnd->ibnd", (attn_prob, head_v))
         attn_vec = attn_vec.contiguous().view(
             attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head
@@ -187,16 +176,12 @@ class RelMultiHeadAttn(nn.Module):
         self.d_head = d_head
         self.dropout = dropout
 
-        # DIMS: d_model x 3*n_head*d_head
         self.qkv_net = nn.Linear(d_model, 3 * n_head * d_head, bias=False)
 
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
-
-        # DIMS: d_model x n_head*d_head
         self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
 
-        # DIMS: d_model
         self.layer_norm = nn.LayerNorm(d_model)
 
         self.scale = 1 / (d_head ** 0.5)
@@ -260,7 +245,6 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
     def __init__(self, *args, **kwargs):
         super(RelPartialLearnableMultiHeadAttn, self).__init__(*args, **kwargs)
 
-        # DIMS: d_model x n_head*d_head
         self.r_net = nn.Linear(self.d_model, self.n_head * self.d_head, bias=False)
 
     def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
