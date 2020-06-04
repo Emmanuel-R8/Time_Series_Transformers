@@ -1,8 +1,6 @@
 import functools
 import os, shutil
 
-import numpy as np
-
 import torch
 
 

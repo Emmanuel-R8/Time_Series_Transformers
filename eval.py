@@ -11,7 +11,9 @@ from data_utils import get_lm_corpus
 from mem_transformer import MemTransformerLM
 from utils.exp_utils import get_logger
 
-parser = argparse.ArgumentParser(description="PyTorch Transformer Language Model")
+parser = argparse.ArgumentParser(
+    description="PyTorch Transformer Language Model"
+)
 parser.add_argument(
     "--data",
     type=str,
@@ -40,16 +42,25 @@ parser.add_argument(
     "--ext_len", type=int, default=0, help="length of the extended context"
 )
 parser.add_argument(
-    "--mem_len", type=int, default=0, help="length of the retained previous heads"
+    "--mem_len",
+    type=int,
+    default=0,
+    help="length of the retained previous heads",
 )
 parser.add_argument(
     "--clamp_len", type=int, default=-1, help="max positional embedding index"
 )
 parser.add_argument("--cuda", action="store_true", help="use CUDA")
-parser.add_argument("--work_dir", type=str, required=True, help="path to the work_dir")
-parser.add_argument("--no_log", action="store_true", help="do not log the eval result")
 parser.add_argument(
-    "--same_length", action="store_true", help="set same length attention with masking"
+    "--work_dir", type=str, required=True, help="path to the work_dir"
+)
+parser.add_argument(
+    "--no_log", action="store_true", help="do not log the eval result"
+)
+parser.add_argument(
+    "--same_length",
+    action="store_true",
+    help="set same length attention with masking",
 )
 args = parser.parse_args()
 assert args.ext_len >= 0, "extended context length must be non-negative"
@@ -57,7 +68,9 @@ assert args.ext_len >= 0, "extended context length must be non-negative"
 device = torch.device("cuda" if args.cuda else "cpu")
 
 # Get logger
-logging = get_logger(os.path.join(args.work_dir, "log.txt"), log_=not args.no_log)
+logging = get_logger(
+    os.path.join(args.work_dir, "log.txt"), log_=not args.no_log
+)
 
 # Load dataset
 corpus = get_lm_corpus(args.data, args.dataset)
@@ -77,7 +90,11 @@ model = model.to(device)
 
 logging(
     "Evaluating with bsz {} tgt_len {} ext_len {} mem_len {} clamp_len {}".format(
-        args.batch_size, args.tgt_len, args.ext_len, args.mem_len, args.clamp_len
+        args.batch_size,
+        args.tgt_len,
+        args.ext_len,
+        args.mem_len,
+        args.clamp_len,
     )
 )
 

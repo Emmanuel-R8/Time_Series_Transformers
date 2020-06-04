@@ -1,5 +1,6 @@
 #%%
 import train_ts
+
 from utils.argparsing import parser
 
 #%%
@@ -27,6 +28,3 @@ arguments = parser.parse_args(
 
 #%%
 train_ts.train_ts(arguments)
-
-
-# %%

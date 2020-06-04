@@ -1,14 +1,9 @@
-import sys
 import math
-import functools
-
-import numpy as np
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils.log_uniform_sampler import LogUniformSampler, sample_logits
 from utils.proj_adaptive_sigmoid import ProjectedAdaptiveSigmoid
 
 
@@ -20,7 +15,8 @@ class PositionalEmbedding(nn.Module):
         self.n_emb = math.ceil(d_emb / 2)
 
         # Instead of writing sin(x / f) will use sin(x * inv_freq)
-        # Frequencies range from 1 to 10000**2, sort of exponential progression with exactly d_pos_emb frequencies
+        # Frequencies range from 1 to 10000**2, sort of exponential progression
+        # with exactly d_pos_emb frequencies
         inv_freq = 1 / (10000 ** (torch.arange(0.0, d_emb, 2.0) / d_emb))
         # inv_freq = inv_freq.rename('InvFreq') unsupported by torch.ger
 
@@ -40,14 +36,12 @@ class PositionalEmbedding(nn.Module):
         if bsz is not None:
             # DIMS: pos_seq x bsz x (2 x d_emb)
             pos_emb = pos_emb[:, None, :].expand(-1, bsz, -1)
-            pos_emb = pos_emb.rename("PosSeq", "Batch", "PosEmb")
         else:
-            return pos_emb[:, None, :]
             # DIMS: pos_seq x bsz x (2 x d_emb)
-            pos_emb = pos_emb.rename("PosSeq", "Batch", "PosEmb")
+            pos_emb = pos_emb[:, None, :]
 
         # DIMS: pos_seq x bsz x (2 x n_emb)
-        assert pos_emb.size()[0] == pos_seq, "pos_emb.size()[0] != pos_seq"
+        assert pos_emb.size()[0] == pos_seq.size()[0], "pos_emb.size()[0] != pos_seq"
         if bsz is not None:
             assert pos_emb.size()[1] == bsz, "pos_emb.size()[1] != bsz"
         assert (
@@ -267,15 +261,19 @@ class RelMultiHeadAttn(nn.Module):
         return x
 
     def _rel_shift(self, x, zero_triu=False):
+
+        print(x.size())
         # Create a block of zeros that will be added along the 4th dimension
         # DIMS: x0 x x1 x x2 x 1
         zero_pad = torch.zeros(
             (x.size(0), x.size(1), x.size(2), 1), device=x.device, dtype=x.dtype
         )
+        print(zero_pad.size())
 
         # Add along the 4th dimension
         # DIMS: x0 x x1 x x2 x (x3 + 1)
         x_padded = torch.cat([zero_pad, x], dim=3)
+        print(x_padded.size())
 
         # CHECK: Those 2 lines makes little sense
         # x_padded = x_padded.view(x.size(0), x.size(1), x.size(3) + 1, x.size(2))
@@ -284,6 +282,7 @@ class RelMultiHeadAttn(nn.Module):
         # This version retains the original shape of x
         # DIMS: x0 x x1 x x2 x x3
         x = x_padded[:, :, :, 1:].view_as(x)
+        print(x.size())
 
         if zero_triu:
             ones = torch.ones((x.size(2), x.size(3)))
@@ -307,15 +306,24 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
     def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
 
+        print("w size: ", w.size())
+        print("r size: ", r.size())
+        print("r_w_bias size: ", r_w_bias.size())
+        print("r_r_bias size: ", r_r_bias.size())
+
         if mems is not None:
-            assert (
-                mems.size()[1] == w.size()[1]
-            ), "RelPartialLearnableMultiHeadAttn/forward: mems.size()[1] != w.size()[1]"
+            print("mems size: ", mems.size())
+            # assert (
+            #     mems.size()[1] == w.size()[1]
+            # ), "RelPartialLearnableMultiHeadAttn/forward: mems.size()[1] != w.size()[1]"
 
             # Concatenate memories + current segment along 1st dimension
             # DIMS: mems -> n_mem x d_model
-            # DIMS: w ->    n_model x d_model
+            # DIMS: w ->    tgt_len x bsz x d_model
             # DIMS: cat ->  (n_mem+n_model) x d_model
+
+            # CHECK: mems has to be copid to have one per training value in
+            # the batch
             cat = torch.cat([mems, w], 0)
             if self.pre_lnorm:
                 # DIMS: cat ->     (n_mem+n_model) x d_model
@@ -618,7 +626,7 @@ class AdaptiveEmbedding(nn.Module):
             param = next(self.parameters())
             inp_flat = inp.view(-1)
             emb_flat = torch.zeros(
-                [inp_flat.size(0), self.d_proj], dtype=param.dtype, device=param.device
+                [inp_flat.size(0), self.d_proj], dtype=param.dtype, device=param.device,
             )
             for i in range(len(self.cutoffs)):
                 l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
@@ -687,7 +695,7 @@ class MemTransformerLM(nn.Module):
         self.tgt_len = tgt_len
         self.mem_len = mem_len
         self.ext_len = ext_len
-        self.max_klen = tgt_len + ext_len + mem_len
+        self.max_n_keys = tgt_len + ext_len + mem_len
 
         self.attn_type = attn_type
 
@@ -774,15 +782,15 @@ class MemTransformerLM(nn.Module):
         # learnable
         elif self.attn_type == 1:
             self.r_emb = nn.Parameter(
-                torch.Tensor(self.n_layer, self.max_klen, self.n_head, self.d_head)
+                torch.Tensor(self.n_layer, self.max_n_keys, self.n_head, self.d_head)
             )
             # DIMS: n_layer x n_head x n_head
             self.r_w_bias = nn.Parameter(
                 torch.Tensor(self.n_layer, self.n_head, self.d_head)
             )
-            # DIMS: n_layer x max_klen x n_head
+            # DIMS: n_layer x max_n_keys x n_head
             self.r_bias = nn.Parameter(
-                torch.Tensor(self.n_layer, self.max_klen, self.n_head)
+                torch.Tensor(self.n_layer, self.max_n_keys, self.n_head)
             )
 
         # absolute standard
@@ -792,7 +800,7 @@ class MemTransformerLM(nn.Module):
         # absolute deeper SA
         elif self.attn_type == 3:
             self.r_emb = nn.Parameter(
-                torch.Tensor(self.n_layer, self.max_klen, self.n_head, self.d_head)
+                torch.Tensor(self.n_layer, self.max_n_keys, self.n_head, self.d_head)
             )
 
     def reset_length(self, tgt_len, ext_len, mem_len):
@@ -965,6 +973,7 @@ class MemTransformerLM(nn.Module):
         # So, have to initialize size(0) mems inside the model forward.
         # Moreover, have to return new_mems to allow nn.DataParallel to piece
         # them together.
+
         if not mems:
             mems = self.init_mems()
 
