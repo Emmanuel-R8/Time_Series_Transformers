@@ -17,6 +17,7 @@ class PositionalEmbedding(nn.Module):
         super(PositionalEmbedding, self).__init__()
 
         self.d_emb = d_emb
+        self.n_emb = math.ceil(d_emb / 2)
 
         # Instead of writing sin(x / f) will use sin(x * inv_freq)
         # Frequencies range from 1 to 10000**2, sort of exponential progression with exactly d_pos_emb frequencies
@@ -24,26 +25,35 @@ class PositionalEmbedding(nn.Module):
         # inv_freq = inv_freq.rename('InvFreq') unsupported by torch.ger
 
         # Register this variable as a constant
-        # DIMS: ceiling(d_pos_emb / 2)
+        # DIMS: ceiling(d_emb / 2)
         self.register_buffer("inv_freq", inv_freq)
 
     def forward(self, pos_seq, bsz=None):
 
         # torch.ger = outer product
-        # DIMS: pos_seq x d_pos_emb
+        # DIMS: pos_seq x d_emb
         sinusoid_inp = torch.ger(pos_seq, self.inv_freq)
 
         # DIMS: pos_seq x (2 x d_emb)
         pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
 
         if bsz is not None:
+            # DIMS: pos_seq x bsz x (2 x d_emb)
             pos_emb = pos_emb[:, None, :].expand(-1, bsz, -1)
             pos_emb = pos_emb.rename("PosSeq", "Batch", "PosEmb")
         else:
             return pos_emb[:, None, :]
+            # DIMS: pos_seq x bsz x (2 x d_emb)
             pos_emb = pos_emb.rename("PosSeq", "Batch", "PosEmb")
 
-        # DIMS: PosSeq x bsz x d_emb
+        # DIMS: pos_seq x bsz x (2 x n_emb)
+        assert pos_emb.size()[0] == pos_seq, "pos_emb.size()[0] != pos_seq"
+        if bsz is not None:
+            assert pos_emb.size()[1] == bsz, "pos_emb.size()[1] != bsz"
+        assert (
+            pos_emb.size()[2] == 2 * self.n_emb
+        ), "pos_emb.size()[2] != 2 * self.n_emb"
+
         return pos_emb
 
 
@@ -75,7 +85,9 @@ class PositionwiseFF(nn.Module):
         self.pre_lnorm = pre_lnorm
 
     def forward(self, input):
-        assert input.size()[0] == self.d_model
+        assert (
+            input.size()[0] == self.d_model
+        ), "PositionWideFF/forward: input.size()[0] != self.d_model"
 
         if self.pre_lnorm:
             # layer normalization + positionwise feed-forward
@@ -91,6 +103,9 @@ class PositionwiseFF(nn.Module):
 
             # residual connection + layer normalization
             output = self.layer_norm(input + core_out)
+
+        assert output.size()[0] == self.d_model, "output.size()[0] != self.d_model"
+        assert output.size()[1] == self.d_model, "output.size()[1] != self.d_model"
 
         return output
 
@@ -282,7 +297,9 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
 
         if mems is not None:
-            assert mems.size()[1] == w.size()[1]
+            assert (
+                mems.size()[1] == w.size()[1]
+            ), "RelPartialLearnableMultiHeadAttn/forward: mems.size()[1] != w.size()[1]"
 
             # Concatenate memories + current segment along 1st dimension
             # DIMS: mems -> n_mem x d_model
@@ -337,7 +354,7 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         AC = torch.einsum("ibnd,jbnd->bnij", (rw_head_q, w_head_k))
 
         # [CHECK] bsz x n_head x qlen x klen
-        
+
         rr_head_q = w_head_q + r_r_bias
         # DIMS: r_r_bias -> n_head x n_head
         BD = torch.einsum("ibnd,jnd->bnij", (rr_head_q, r_head_k))
@@ -790,7 +807,9 @@ class MemTransformerLM(nn.Module):
             return None
 
         # mems is not None
-        assert len(hids) == len(mems), "len(hids) != len(mems)"
+        assert len(hids) == len(
+            mems
+        ), "len(hids) != len(mems) ({len(hids)} != {len(mems)})"
 
         # There are `mlen + qlen` steps that can be cached into mems
         # For the next step, the last `ext_len` of the `qlen` tokens
@@ -802,7 +821,6 @@ class MemTransformerLM(nn.Module):
             end_idx = mlen + max(0, qlen - 0 - self.ext_len)
             beg_idx = max(0, end_idx - self.mem_len)
             for i in range(len(hids)):
-
                 cat = torch.cat([mems[i], hids[i]], dim=0)
                 new_mems.append(cat[beg_idx:end_idx].detach())
 
@@ -853,10 +871,8 @@ class MemTransformerLM(nn.Module):
                 core_out = layer(
                     core_out,
                     pos_emb,
-
                     # DIMS: n_head x n_head
                     self.r_w_bias,
-
                     # DIMS: n_head x n_head
                     self.r_r_bias,
                     dec_attn_mask=dec_attn_mask,
@@ -879,7 +895,6 @@ class MemTransformerLM(nn.Module):
                 core_out = layer(
                     core_out,
                     r_emb,
-
                     # DIMS: n_head
                     self.r_w_bias[i],
                     r_bias,
