@@ -13,17 +13,18 @@ from utils.proj_adaptive_sigmoid import ProjectedAdaptiveSigmoid
 
 
 class PositionalEmbedding(nn.Module):
-    def __init__(self, d_pos_emb):
+    def __init__(self, d_emb):
         super(PositionalEmbedding, self).__init__()
 
-        self.d_pos_emb = d_pos_emb
+        self.d_emb = d_emb
 
         # Instead of writing sin(x / f) will use sin(x * inv_freq)
         # Frequencies range from 1 to 10000**2, sort of exponential progression with exactly d_pos_emb frequencies
-        inv_freq = 1 / (10000 ** (torch.arange(0.0, d_pos_emb, 2.0) / d_pos_emb))
+        inv_freq = 1 / (10000 ** (torch.arange(0.0, d_emb, 2.0) / d_emb))
         # inv_freq = inv_freq.rename('InvFreq') unsupported by torch.ger
 
         # Register this variable as a constant
+        # DIMS: ceiling(d_pos_emb / 2)
         self.register_buffer("inv_freq", inv_freq)
 
     def forward(self, pos_seq, bsz=None):
@@ -32,7 +33,7 @@ class PositionalEmbedding(nn.Module):
         # DIMS: pos_seq x d_pos_emb
         sinusoid_inp = torch.ger(pos_seq, self.inv_freq)
 
-        # DIMS: pos_seq x (2 x d_pos_emb)
+        # DIMS: pos_seq x (2 x d_emb)
         pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
 
         if bsz is not None:
@@ -42,6 +43,7 @@ class PositionalEmbedding(nn.Module):
             return pos_emb[:, None, :]
             pos_emb = pos_emb.rename("PosSeq", "Batch", "PosEmb")
 
+        # DIMS: PosSeq x bsz x d_emb
         return pos_emb
 
 
@@ -327,15 +329,17 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         r_head_k = r_head_k.view(rlen, self.n_head, self.d_head)
 
         # compute attention score
-        # qlen x bsz x n_head x d_head
+        # [CHECK] qlen x bsz x n_head x d_head
+        # DIMS: r_w_bias -> n_head x n_head
         rw_head_q = w_head_q + r_w_bias
 
         # bsz x n_head x qlen x klen
         AC = torch.einsum("ibnd,jbnd->bnij", (rw_head_q, w_head_k))
 
-        # bsz x n_head x qlen x klen
+        # [CHECK] bsz x n_head x qlen x klen
+        
         rr_head_q = w_head_q + r_r_bias
-
+        # DIMS: r_r_bias -> n_head x n_head
         BD = torch.einsum("ibnd,jnd->bnij", (rr_head_q, r_head_k))
         BD = self._rel_shift(BD)
 
@@ -535,6 +539,8 @@ class RelPartialLearnableDecoderLayer(nn.Module):
 
     def forward(self, dec_inp, r, r_w_bias, r_r_bias, dec_attn_mask=None, mems=None):
 
+        # DIMS: r_w_bias -> n_head x n_head
+        # DIMS: r_r_bias -> n_head x n_head
         output = self.dec_attn(
             dec_inp, r, r_w_bias, r_r_bias, attn_mask=dec_attn_mask, mems=mems
         )
@@ -726,23 +732,37 @@ class MemTransformerLM(nn.Module):
         self._create_params()
 
     def _create_params(self):
-        if self.attn_type == 0:  # default attention
+        # default attention
+        if self.attn_type == 0:
+            # DIMS: ceiling(d_emb / 2)
             self.pos_emb = PositionalEmbedding(self.d_model)
+
+            # DIMS: n_head x n_head
             self.r_w_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
+
+            # DIMS: n_head x n_head
             self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
-        elif self.attn_type == 1:  # learnable
+
+        # learnable
+        elif self.attn_type == 1:
             self.r_emb = nn.Parameter(
                 torch.Tensor(self.n_layer, self.max_klen, self.n_head, self.d_head)
             )
+            # DIMS: n_layer x n_head x n_head
             self.r_w_bias = nn.Parameter(
                 torch.Tensor(self.n_layer, self.n_head, self.d_head)
             )
+            # DIMS: n_layer x max_klen x n_head
             self.r_bias = nn.Parameter(
                 torch.Tensor(self.n_layer, self.max_klen, self.n_head)
             )
-        elif self.attn_type == 2:  # absolute standard
+
+        # absolute standard
+        elif self.attn_type == 2:
             self.pos_emb = PositionalEmbedding(self.d_model)
-        elif self.attn_type == 3:  # absolute deeper SA
+
+        # absolute deeper SA
+        elif self.attn_type == 3:
             self.r_emb = nn.Parameter(
                 torch.Tensor(self.n_layer, self.max_klen, self.n_head, self.d_head)
             )
@@ -833,7 +853,11 @@ class MemTransformerLM(nn.Module):
                 core_out = layer(
                     core_out,
                     pos_emb,
+
+                    # DIMS: n_head x n_head
                     self.r_w_bias,
+
+                    # DIMS: n_head x n_head
                     self.r_r_bias,
                     dec_attn_mask=dec_attn_mask,
                     mems=mems_i,
@@ -855,6 +879,8 @@ class MemTransformerLM(nn.Module):
                 core_out = layer(
                     core_out,
                     r_emb,
+
+                    # DIMS: n_head
                     self.r_w_bias[i],
                     r_bias,
                     dec_attn_mask=dec_attn_mask,
