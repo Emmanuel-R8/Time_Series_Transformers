@@ -3,5 +3,8 @@ data
 .idea
 .vscode
 
+scratchpad.py
+
+LM-TFM-enwik8
 __pycache__
 
