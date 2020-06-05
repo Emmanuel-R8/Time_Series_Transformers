@@ -26,7 +26,9 @@ parser.add_argument("--n_layer", type=int, default=12, help="number of total lay
 parser.add_argument("--n_head", type=int, default=10, help="number of heads")
 parser.add_argument("--d_head", type=int, default=50, help="head dimension")
 parser.add_argument("--d_embed", type=int, default=-1, help="embedding dimension")
-parser.add_argument("--d_model", type=int, default=500, help="model dimension. Must be even.")
+parser.add_argument(
+    "--d_model", type=int, default=500, help="model dimension. Must be even."
+)
 parser.add_argument("--d_inner", type=int, default=1000, help="inner dimension in FF")
 parser.add_argument("--batch_size", type=int, default=60, help="batch size")
 parser.add_argument(
@@ -249,4 +251,3 @@ parser.add_argument(
     help='Pass a dictionary formatted "KEYi=VALi,KEYj=VALj..."'
     " to indicate what the ratio of widening should be at which epochs",
 )
-

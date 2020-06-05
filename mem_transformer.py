@@ -371,7 +371,6 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
             # DIMS: w_head_v -> tgt_len x bsz x n_head x d_head
             w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
 
-
         # klen = tgt_len
         klen = w_head_k.size(0)
 
@@ -899,15 +898,13 @@ class MemTransformerLM(nn.Module):
                 mask_shift_len = qlen - mask_len
             else:
                 mask_shift_len = qlen
-            dec_attn_mask = (
-                torch.triu(all_ones, 1 + mlen) + torch.tril(all_ones, -mask_shift_len)
+            dec_attn_mask = torch.triu(all_ones, 1 + mlen) + torch.tril(
+                all_ones, -mask_shift_len
             )
             # REVERT? dec_attn_mask = dec_attn_mask.byte()[:, :, None]  # -1
             dec_attn_mask = dec_attn_mask.byte()
         else:
-            dec_attn_mask = torch.triu(
-                word_emb.new_ones(qlen, klen), diagonal=1 + mlen
-            )
+            dec_attn_mask = torch.triu(word_emb.new_ones(qlen, klen), diagonal=1 + mlen)
             # REVERT? dec_attn_mask = dec_attn_mask.byte()[:, :, None]  # -1
             dec_attn_mask = dec_attn_mask.byte()
 
