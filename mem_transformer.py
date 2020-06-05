@@ -11,6 +11,7 @@ class PositionalEmbedding(nn.Module):
     def __init__(self, d_emb):
         super(PositionalEmbedding, self).__init__()
 
+        assert d_emb % 2 == 0, "The embedding size d_model must be an even number"
         self.d_emb = d_emb
         self.n_emb = math.ceil(d_emb / 2)
 
@@ -306,12 +307,22 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
     def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
 
+        # DIMS: w -> tgt_len x bsz x d_model
+        # qlen = tgt_len
         print("w size: ", w.size())
+
+        # DIMS: r -> tgt_len x 1 x d_model
+        # rlen = tgt_len
         print("r size: ", r.size())
+
+        # DIMS: r -> n_head x d_head
         print("r_w_bias size: ", r_w_bias.size())
+
+        # DIMS: r -> n_head x d_head
         print("r_r_bias size: ", r_r_bias.size())
 
         if mems is not None:
+            # DIMS: 0 at the beginning
             print("mems size: ", mems.size())
             # assert (
             #     mems.size()[1] == w.size()[1]
@@ -322,68 +333,109 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
             # DIMS: w ->    tgt_len x bsz x d_model
             # DIMS: cat ->  (n_mem+n_model) x d_model
 
-            # CHECK: mems has to be copid to have one per training value in
+            # CHECK: mems has to be copied to have one per training value in
             # the batch
+            # DIMS: w -> tgt_len x bsz x d_model
+            # DIMS: mems -> ???
+            # DIMS: cat -> (tgt_len + ???) x bsz x d_model
             cat = torch.cat([mems, w], 0)
             if self.pre_lnorm:
-                # DIMS: cat ->     (n_mem+n_model) x d_model
+                # DIMS: cat ->     tgt_len x bsz x d_model
                 # DIMS: qkc_net -> d_model x 3*n_head*d_head
-                # DIMS: w_heads -> (n_mem+n_model) x 3*n_head*d_head
+                # DIMS: w_heads -> (tgt_len + ???) x bsz x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(cat))
             else:
-                # DIMS: cat ->     (n_mem+n_model) x d_model
+                # DIMS: cat ->     tgt_len x bsz x d_model
                 # DIMS: qkc_net -> d_model x 3*n_head*d_head
-                # DIMS: w_heads -> (n_mem+n_model) x 3*n_head*d_head
+                # DIMS: w_heads -> (tgt_len + ???) x bsz x 3*n_head*d_head
                 w_heads = self.qkv_net(cat)
+
+            # DIMS: r -> tgt_len x 1 x d_model
+            # DIMS: r_net -> d_model x n_head*d_head
+            # DIMS: r_head_k -> tgt_len x n_head x d_head
             r_head_k = self.r_net(r)
 
+            # DIMS: w_heads -> tgt_len x bsz x 3*n_head*d_head
+            # DIMS: w_head_q -> tgt_len x bsz x n_head x d_head
+            # DIMS: w_head_k -> tgt_len x bsz x n_head x d_head
+            # DIMS: w_head_v -> tgt_len x bsz x n_head x d_head
             w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
+
+            # DIMS: w_head_q -> qlen x bsz x n_head x d_head
             w_head_q = w_head_q[-qlen:]
         else:
             if self.pre_lnorm:
-                # DIMS: d_model x 3*n_head*d_head
+                # DIMS: w -> tgt_len x bsz x d_model
+                # DIMS: qkv_net -> d_model x 3*n_head*d_head
+                # DIMS: w_heads -> tgt_len x bsz x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(w))
             else:
-                # DIMS: d_model x 3*n_head*d_head
+                # DIMS: w -> tgt_len x bsz x d_model
+                # DIMS: qkv_net -> d_model x 3*n_head*d_head
+                # DIMS: w_heads -> tgt_len x bsz x 3*n_head*d_head
                 w_heads = self.qkv_net(w)
+
+            # DIMS: r -> tgt_len x 1 x d_model
+            # DIMS: r_net -> d_model x n_head*d_head
+            # DIMS: r_head_k -> tgt_len x n_head x d_head
             r_head_k = self.r_net(r)
 
+            # DIMS: w_heads -> tgt_len x bsz x 3*n_head*d_head
+            # DIMS: w_head_q -> tgt_len x bsz x n_head x d_head
+            # DIMS: w_head_k -> tgt_len x bsz x n_head x d_head
+            # DIMS: w_head_v -> tgt_len x bsz x n_head x d_head
             w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
 
+
+        # klen = tgt_len
         klen = w_head_k.size(0)
 
-        # qlen x bsz x n_head x d_head
+        # DIMS: qlen x bsz x n_head x d_head
         w_head_q = w_head_q.view(qlen, bsz, self.n_head, self.d_head)
 
-        # qlen x bsz x n_head x d_head
+        # DIMS: klen x bsz x n_head x d_head
         w_head_k = w_head_k.view(klen, bsz, self.n_head, self.d_head)
 
-        # qlen x bsz x n_head x d_head
+        # DIMS: klen x bsz x n_head x d_head
         w_head_v = w_head_v.view(klen, bsz, self.n_head, self.d_head)
 
-        # qlen x n_head x d_head
+        # DIMS: rlen x n_head x d_head
         r_head_k = r_head_k.view(rlen, self.n_head, self.d_head)
 
         # compute attention score
-        # [CHECK] qlen x bsz x n_head x d_head
-        # DIMS: r_w_bias -> n_head x n_head
+        # DIMS: w_head_q ->  qlen x bsz x n_head x d_head
+        # DIMS: r_w_bias ->               n_head x n_head
+        # DIMS: rw_head_q -> qlen x bsz x n_head x d_head
         rw_head_q = w_head_q + r_w_bias
 
-        # bsz x n_head x qlen x klen
+        # DIMS: rw_head_q -> qlen x bsz x n_head x d_head
+        # DIMS: w_head_k ->  klen x bsz x n_head x d_head
+        # DIMS: AC ->        bsz x n_head x qlen x klen
         AC = torch.einsum("ibnd,jbnd->bnij", (rw_head_q, w_head_k))
 
-        # [CHECK] bsz x n_head x qlen x klen
-
+        # DIMS: w_head_q ->  qlen x bsz x n_head x d_head
+        # DIMS: r_r_bias ->               n_head x n_head
+        # DIMS: rr_head_q -> qlen x bsz x n_head x d_head
         rr_head_q = w_head_q + r_r_bias
-        # DIMS: r_r_bias -> n_head x n_head
+
+        # DIMS: rr_head_q -> qlen x bsz x n_head x d_head
+        # DIMS: r_head_k ->        rlen x n_head x d_head
+        # DIMS: BD ->        bsz x n_head x qlen x rlen
         BD = torch.einsum("ibnd,jnd->bnij", (rr_head_q, r_head_k))
+
+        # DIMS: BD -> bsz x n_head x qlen x rlen
         BD = self._rel_shift(BD)
 
-        # [qlen x klen x bsz x n_head]
+        # DIMS: AC -> bsz x n_head x qlen x klen
+        # DIMS: BD -> bsz x n_head x qlen x rlen
+        # DIMS: attn_score -> bsz x n_head x qlen x rlen
+        # klen = rlen = tgt_len
         attn_score = AC + BD
         attn_score.mul_(self.scale)
 
         # compute attention probability
+        # DIMS: attn_mask ->                 tgt_len x tgt_len x 1
+        # DIMS: attn_score -> bsz x n_head x tgt_len x tgt_len
         if attn_mask is not None and attn_mask.any().item():
             if attn_mask.dim() == 2:
                 attn_score.masked_fill_(attn_mask[None, None, :, :], -float("inf"))
@@ -391,7 +443,7 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
                 attn_score.masked_fill_(attn_mask[:, None, :, :], -float("inf"))
 
         # [bsz x n_head x qlen x klen]
-        attn_prob = F.sigmoid(attn_score, dim=3)
+        attn_prob = F.sigmoid(attn_score)
         attn_prob = self.dropatt(attn_prob)
 
         # compute attention vector
@@ -575,8 +627,10 @@ class RelPartialLearnableDecoderLayer(nn.Module):
 
     def forward(self, dec_inp, r, r_w_bias, r_r_bias, dec_attn_mask=None, mems=None):
 
-        # DIMS: r_w_bias -> n_head x n_head
-        # DIMS: r_r_bias -> n_head x n_head
+        # DIMS: r -> tgt_len x 1 x (d_model + 1)
+        # DIMS: r_w_bias -> n_head x d_head
+        # DIMS: r_r_bias -> n_head x d_head
+        # DIMS: output ->
         output = self.dec_attn(
             dec_inp, r, r_w_bias, r_r_bias, attn_mask=dec_attn_mask, mems=mems
         )
@@ -861,19 +915,23 @@ class MemTransformerLM(nn.Module):
                 mask_shift_len = qlen
             dec_attn_mask = (
                 torch.triu(all_ones, 1 + mlen) + torch.tril(all_ones, -mask_shift_len)
-            ).byte()[
-                :, :, None
-            ]  # -1
+            )
+            # REVERT? dec_attn_mask = dec_attn_mask.byte()[:, :, None]  # -1
+            dec_attn_mask = dec_attn_mask.byte()
         else:
             dec_attn_mask = torch.triu(
                 word_emb.new_ones(qlen, klen), diagonal=1 + mlen
-            ).byte()[:, :, None]
+            )
+            # REVERT? dec_attn_mask = dec_attn_mask.byte()[:, :, None]  # -1
+            dec_attn_mask = dec_attn_mask.byte()
+
         dec_attn_mask = dec_attn_mask.bool()  # Convert to bool
 
         hids = []
 
         # Default
         if self.attn_type == 0:
+            # DIMS: pos_seq -> tgt_len
             pos_seq = torch.arange(
                 klen - 1, -1, -1.0, device=word_emb.device, dtype=word_emb.dtype
             )
@@ -888,7 +946,9 @@ class MemTransformerLM(nn.Module):
             for i, layer in enumerate(self.layers):
                 mems_i = None if mems is None else mems[i]
                 core_out = layer(
+                    # DIMS: tgt_len x 1 x d_model
                     core_out,
+                    # DIMS: tgt_len x 1 x (d_model+1)
                     pos_emb,
                     # DIMS: n_head x n_head
                     self.r_w_bias,

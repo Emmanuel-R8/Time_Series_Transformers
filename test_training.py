@@ -10,8 +10,8 @@ arguments = parser.parse_args(
     "--datadir ./data/enwik8 \
      --dataset enwik8 \
      --n_layer 3 \
-     --d_model 253 \
-     --n_head 4 \
+     --d_model 256 \
+     --n_head 5 \
      --d_head 61 \
      --d_inner 17 \
      --dropout 0.1 \
@@ -21,9 +21,9 @@ arguments = parser.parse_args(
      --warmup_step 0 \
      --max_step 10000 \
      --tgt_len 13 \
-     --mem_len 70 \
-     --eval_tgt_len 64 \
-     --batch_size 22 ".split()
+     --mem_len 19 \
+     --eval_tgt_len 59 \
+     --batch_size 11 ".split()
 )
 
 #%%
