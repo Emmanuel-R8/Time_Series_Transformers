@@ -80,27 +80,27 @@ class PositionwiseFF(nn.Module):
         self.pre_lnorm = pre_lnorm
 
     def forward(self, input):
+        # DIMS: input -> tgt_len x bsz x d_model
         assert (
-            input.size()[0] == self.d_model
+            input.size()[2] == self.d_model
         ), "PositionWideFF/forward: input.size()[0] != self.d_model"
 
         if self.pre_lnorm:
             # layer normalization + positionwise feed-forward
-            # DIMS: d_model x d_model
+            # DIMS: core_out -> tgt_len x bsz x d_model
             core_out = self.CoreNet(self.layer_norm(input))
 
             # residual connection
+            # DIMS: output -> tgt_len x bsz x d_model
             output = core_out + input
         else:
             # positionwise feed-forward
-            # DIMS: d_model x d_model
+            # DIMS: core_out -> tgt_len x bsz x d_model
             core_out = self.CoreNet(input)
 
             # residual connection + layer normalization
+            # DIMS: output -> tgt_len x bsz x d_model
             output = self.layer_norm(input + core_out)
-
-        assert output.size()[0] == self.d_model, "output.size()[0] != self.d_model"
-        assert output.size()[1] == self.d_model, "output.size()[1] != self.d_model"
 
         return output
 
@@ -166,7 +166,7 @@ class MultiHeadAttn(nn.Module):
                 attn_score.masked_fill_(attn_mask[:, :, :, None], -float("inf"))
 
         # [qlen x klen x bsz x n_head]
-        attn_prob = F.sigmoid(attn_score, dim=1)
+        attn_prob = torch.sigmoid(attn_score, dim=1)
         attn_prob = self.dropatt(attn_prob)
 
         # [qlen x klen x bsz x n_head] x [klen x bsz x n_head x d_head] ->
@@ -263,18 +263,15 @@ class RelMultiHeadAttn(nn.Module):
 
     def _rel_shift(self, x, zero_triu=False):
 
-        print(x.size())
         # Create a block of zeros that will be added along the 4th dimension
         # DIMS: x0 x x1 x x2 x 1
         zero_pad = torch.zeros(
             (x.size(0), x.size(1), x.size(2), 1), device=x.device, dtype=x.dtype
         )
-        print(zero_pad.size())
 
         # Add along the 4th dimension
         # DIMS: x0 x x1 x x2 x (x3 + 1)
         x_padded = torch.cat([zero_pad, x], dim=3)
-        print(x_padded.size())
 
         # CHECK: Those 2 lines makes little sense
         # x_padded = x_padded.view(x.size(0), x.size(1), x.size(3) + 1, x.size(2))
@@ -283,7 +280,6 @@ class RelMultiHeadAttn(nn.Module):
         # This version retains the original shape of x
         # DIMS: x0 x x1 x x2 x x3
         x = x_padded[:, :, :, 1:].view_as(x)
-        print(x.size())
 
         if zero_triu:
             ones = torch.ones((x.size(2), x.size(3)))
@@ -309,24 +305,13 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
 
         # DIMS: w -> tgt_len x bsz x d_model
         # qlen = tgt_len
-        print("w size: ", w.size())
-
         # DIMS: r -> tgt_len x 1 x d_model
         # rlen = tgt_len
-        print("r size: ", r.size())
-
         # DIMS: r -> n_head x d_head
-        print("r_w_bias size: ", r_w_bias.size())
-
         # DIMS: r -> n_head x d_head
-        print("r_r_bias size: ", r_r_bias.size())
 
         if mems is not None:
             # DIMS: 0 at the beginning
-            print("mems size: ", mems.size())
-            # assert (
-            #     mems.size()[1] == w.size()[1]
-            # ), "RelPartialLearnableMultiHeadAttn/forward: mems.size()[1] != w.size()[1]"
 
             # Concatenate memories + current segment along 1st dimension
             # DIMS: mems -> n_mem x d_model
@@ -443,7 +428,7 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
                 attn_score.masked_fill_(attn_mask[:, None, :, :], -float("inf"))
 
         # [bsz x n_head x qlen x klen]
-        attn_prob = F.sigmoid(attn_score)
+        attn_prob = torch.sigmoid(attn_score)
         attn_prob = self.dropatt(attn_prob)
 
         # compute attention vector
@@ -547,7 +532,7 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
                 attn_score.masked_fill_(attn_mask[:, :, :, None], -float("inf"))
 
         # [qlen x klen x bsz x n_head]
-        attn_prob = F.sigmoid(attn_score, dim=1)
+        attn_prob = torch.sigmoid(attn_score, dim=1)
         attn_prob = self.dropatt(attn_prob)
 
         # compute attention vector
@@ -818,6 +803,7 @@ class MemTransformerLM(nn.Module):
         self.same_length = same_length
         self.clamp_len = clamp_len
         self.training_steps = 0
+        self.compute = 0
 
         self._create_params()
 

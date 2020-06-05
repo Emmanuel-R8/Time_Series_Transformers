@@ -59,6 +59,9 @@ def parallelize_model(model, args):
 
 
 def train_ts(args):
+
+    train_step = 0
+
     def build_scheduler(optimizers, args):
         optimizer, optimizer_sparse = optimizers
         scheduler_sparse = None
@@ -227,7 +230,9 @@ def train_ts(args):
         logging(log_str)
         logging("-" * 100)
 
-    def epoch_loop(epoch, model, optimizers, schedulers):
+    def epoch_loop(epoch, model, optimizers, schedulers, ):
+        nonlocal train_step
+
         # Turn on training mode which enables dropout.
         if isinstance(model, nn.DataParallel):
             parent_model = model.module
@@ -752,6 +757,7 @@ def train_ts(args):
     else:
         train_step = model.training_steps
     best_val_loss = None
+
     # Reload previous step number in case of default_args.restart
     if train_step > 0:
         logging(f"restarting from step {train_step}")
@@ -760,6 +766,8 @@ def train_ts(args):
     eval_start_time = time.time()
 
     def run_training():
+        nonlocal train_step
+
         for epoch in itertools.count(start=first_epoch):
             # we check before the training loop; expanding at epoch 0 means
             # before training (for debug purposes)

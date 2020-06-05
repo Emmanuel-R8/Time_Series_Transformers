@@ -88,7 +88,7 @@ class ProjectedAdaptiveSigmoid(nn.Module):
                 self.out_layers[0].bias,
                 self.out_projs[0],
             )
-            nll = -F.logsigmoid(logit, dim=-1).gather(1, target.unsqueeze(1)).squeeze(1)
+            nll = -F.logsigmoid(logit).gather(1, target.unsqueeze(1)).squeeze(1)
         else:
             # construct weights and biases
             weights, biases = [], []
