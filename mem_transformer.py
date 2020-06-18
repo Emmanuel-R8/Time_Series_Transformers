@@ -948,7 +948,7 @@ if __name__ == "__main__":
     import data_utils
 
     data = torch.LongTensor(data_len * B).random_(0, args.n_token).to(device)
-    diter = data_utils.LMOrderedIterator(
+    diter = data_utils.OrderedIterator(
         data, B, tgt_len, device=device, ext_len=ext_len
     )
 

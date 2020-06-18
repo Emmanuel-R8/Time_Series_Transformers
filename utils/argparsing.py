@@ -13,7 +13,8 @@ class StoreDictKeyPair(argparse.Action):
 parser = argparse.ArgumentParser(description="PyTorch Transformer Language Model")
 
 parser.add_argument(
-    "--datadir", type=str, default="./data/enwik8", help="location of the data corpus"
+    "--datadir", type=str, default="./data/etf",
+    help="location of the data corpus"
 )
 parser.add_argument("--n_layer", type=int, default=12, help="number of total layers")
 parser.add_argument("--n_head", type=int, default=10, help="number of heads")

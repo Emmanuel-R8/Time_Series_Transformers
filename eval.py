@@ -7,7 +7,7 @@ import sys
 
 import torch
 
-from data_utils import get_lm_corpus
+from data_utils import get_time_series
 from mem_transformer import MemTransformerLM
 from utils.exp_utils import get_logger
 
@@ -66,8 +66,8 @@ logging = get_logger(
 )
 
 # Load dataset
-corpus = get_lm_corpus(args.data, args.dataset)
-ntokens = len(corpus.vocab)
+corpus = get_time_series(args.data, args.dataset)
+nseries = len(corpus.vocab)
 
 va_iter = corpus.get_iterator(
     "valid", args.batch_size, args.tgt_len, device=device, ext_len=args.ext_len
@@ -137,14 +137,10 @@ elif args.split == "test":
 
 
 def format_log(loss, split):
-    if args.dataset in ["enwik8", "text8"]:
-        log_str = "| {0} loss {1:5.2f} | {0} bpc {2:9.5f} ".format(
-            split, loss, loss / math.log(2)
-        )
-    else:
-        log_str = "| {0} loss {1:5.2f} | {0} ppl {2:9.3f} ".format(
-            split, loss, math.exp(loss)
-        )
+    log_str = "| {0} loss {1:5.2f} | {0} bpc {2:9.5f} ".format(
+        split, loss, loss / math.log(2)
+    )
+
     return log_str
 
 

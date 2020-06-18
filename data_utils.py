@@ -9,7 +9,7 @@ import torch
 from utils.vocabulary import Vocab
 
 
-class LMOrderedIterator(object):
+class OrderedIterator():
     def __init__(self, data, bsz, bptt, device="cpu", ext_len=None):
         """
             data -- LongTensor -- the LongTensor is strictly ordered
@@ -66,128 +66,7 @@ class LMOrderedIterator(object):
         return self.get_fixlen_iter()
 
 
-class LMShuffledIterator(object):
-    def __init__(
-        self, data, bsz, bptt, device="cpu", ext_len=None, shuffle=False
-    ):
-        """
-            data -- list[LongTensor] -- there is no order among the LongTensors
-        """
-        self.data = data
-
-        self.bsz = bsz
-        self.bptt = bptt
-        self.ext_len = ext_len if ext_len is not None else 0
-
-        self.device = device
-        self.shuffle = shuffle
-
-    def get_sent_stream(self):
-        # index iterator
-        epoch_indices = (
-            np.random.permutation(len(self.data))
-            if self.shuffle
-            else np.array(range(len(self.data)))
-        )
-
-        # sentence iterator
-        for idx in epoch_indices:
-            yield self.data[idx]
-
-    def stream_iterator(self, sent_stream):
-        # streams for each data in the batch
-        streams = [None] * self.bsz
-
-        data = torch.LongTensor(self.bptt, self.bsz)
-        target = torch.LongTensor(self.bptt, self.bsz)
-
-        n_retain = 0
-
-        while True:
-            # data   : [n_retain+bptt x bsz]
-            # target : [bptt x bsz]
-            data[n_retain:].fill_(-1)
-            target.fill_(-1)
-
-            valid_batch = True
-
-            for i in range(self.bsz):
-                n_filled = 0
-                try:
-                    while n_filled < self.bptt:
-                        if streams[i] is None or len(streams[i]) <= 1:
-                            streams[i] = next(sent_stream)
-                        # number of new tokens to fill in
-                        n_new = min(len(streams[i]) - 1, self.bptt - n_filled)
-                        # first n_retain tokens are retained from last batch
-                        data[
-                            n_retain + n_filled : n_retain + n_filled + n_new, i
-                        ] = streams[i][:n_new]
-                        target[n_filled : n_filled + n_new, i] = streams[i][
-                            1 : n_new + 1
-                        ]
-                        streams[i] = streams[i][n_new:]
-                        n_filled += n_new
-                except StopIteration:
-                    valid_batch = False
-                    break
-
-            if not valid_batch:
-                return
-
-            data = data.to(self.device)
-            target = target.to(self.device)
-
-            yield data, target, self.bptt
-
-            n_retain = min(data.size(0), self.ext_len)
-            if n_retain > 0:
-                data[:n_retain] = data[-n_retain:]
-            data.resize_(n_retain + self.bptt, data.size(1))
-
-    def __iter__(self):
-        # sent_stream is an iterator
-        sent_stream = self.get_sent_stream()
-
-        for batch in self.stream_iterator(sent_stream):
-            yield batch
-
-
-class LMMultiFileIterator(LMShuffledIterator):
-    def __init__(
-        self, paths, vocab, bsz, bptt, device="cpu", ext_len=None, shuffle=False
-    ):
-
-        self.paths = paths
-        self.vocab = vocab
-
-        self.bsz = bsz
-        self.bptt = bptt
-        self.ext_len = ext_len if ext_len is not None else 0
-
-        self.device = device
-        self.shuffle = shuffle
-
-    def get_sent_stream(self, path):
-        sents = self.vocab.encode_file(path, add_double_eos=True)
-        if self.shuffle:
-            np.random.shuffle(sents)
-        sent_stream = iter(sents)
-
-        return sent_stream
-
-    def __iter__(self):
-        if self.shuffle:
-            np.random.shuffle(self.paths)
-
-        for path in self.paths:
-            # sent_stream is an iterator
-            sent_stream = self.get_sent_stream(path)
-            for batch in self.stream_iterator(sent_stream):
-                yield batch
-
-
-class Corpus(object):
+class TimeSeries(object):
     def __init__(self, path, dataset, *args, **kwargs):
         self.dataset = dataset
         self.vocab = Vocab(*args, **kwargs)
@@ -210,16 +89,16 @@ class Corpus(object):
 
     def get_iterator(self, split, *args, **kwargs):
         if split == "train":
-            data_iter = LMOrderedIterator(self.train, *args, **kwargs)
+            data_iter = OrderedIterator(self.train, *args, **kwargs)
 
         elif split in ["valid", "test"]:
             data = self.valid if split == "valid" else self.test
-            data_iter = LMOrderedIterator(data, *args, **kwargs)
+            data_iter = OrderedIterator(data, *args, **kwargs)
 
         return data_iter
 
 
-def get_lm_corpus(datadir, dataset):
+def get_time_series(datadir, dataset):
     print("Loading cached dataset for: ")
     print(f"   datadir: {datadir}")
     print(f"   dataset: {dataset}")
@@ -228,15 +107,15 @@ def get_lm_corpus(datadir, dataset):
     print(f"   cache path: {fn}")
 
     if os.path.exists(fn):
-        corpus = torch.load(fn)
+        times_series_corpus = torch.load(fn)
     else:
         print("Producing dataset {}...".format(dataset))
         kwargs = {}
 
-        corpus = Corpus(datadir, dataset, **kwargs)
-        torch.save(corpus, fn)
+        times_series_corpus = TimeSeries(datadir, dataset, **kwargs)
+        torch.save(times_series_corpus, fn)
 
-    return corpus
+    return times_series_corpus
 
 
 if __name__ == "__main__":
@@ -246,10 +125,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--datadir",
         type=str,
-        default="./data/enwik8",
-        help="location of the data corpus",
+        default="./data/etf",
+        help="location of the dataset",
     )
     args = parser.parse_args()
 
-    corpus = get_lm_corpus(args.datadir, args.dataset)
+    corpus = get_time_series(args.datadir, args.dataset)
     print("Vocab size : {}".format(len(corpus.vocab.idx2sym)))

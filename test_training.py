@@ -6,8 +6,8 @@ from utils.argparsing import parser
 #%%
 # Test with very unusual value to track errors in tensor sizes
 arguments = parser.parse_args(
-    "--datadir ./data/enwik8 \
-     --dataset enwik8 \
+    "--datadir ./data/etf \
+     --dataset allData.csv \
      --n_layer 2 \
      --d_model 128 \
      --n_head 8 \

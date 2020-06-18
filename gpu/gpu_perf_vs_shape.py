@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 from apex import amp
 
-from data_utils import get_lm_corpus
+from data_utils import get_time_series
 from mem_transformer import MemTransformerLM
 from utils.initialization import weights_init
 from train_ts import parallelize_model, build_optimizer, build_scheduler
@@ -98,7 +98,7 @@ def benchmark(model, optimizers, schedulers):
 
         optimizer.step()
         parent_model.compute += openai_compute(
-            non_emb_param_count(parent_model, ntokens), data.numel(), 1
+            non_emb_param_count(parent_model, nseries), data.numel(), 1
         )
 
         # step-wise learning rate annealing
@@ -153,27 +153,27 @@ if __name__ == "__main__":
 
     default_args = DotDict(
         {
-            "data": "../data/enwik8/",
-            "dataset": "enwik8",
-            "batch_chunk": 1,
-            "not_tied": False,
-            "div_val": 1,
-            "pre_lnorm": False,
-            "dropout": 0.0,
-            "dropatt": 0.0,
-            "init": "normal",
-            "emb_init": "normal",
-            "init_range": 0.1,
+            "data"          : "../data/etf",
+            "dataset"       : "allData.csv",
+            "batch_chunk"   : 1,
+            "not_tied"      : False,
+            "div_val"       : 1,
+            "pre_lnorm"     : False,
+            "dropout"       : 0.0,
+            "dropatt"       : 0.0,
+            "init"          : "normal",
+            "emb_init"      : "normal",
+            "init_range"    : 0.1,
             "emb_init_range": 0.01,
-            "init_std": 0.02,
-            "proj_init_std": 0.01,
-            "optim": "adam",
-            "lr": 5e-05,
-            "mom": 0.0,
-            "scheduler": "cosine",
-            "warmup_step": 0,
-            "decay_rate": 0.5,
-            "lr_min": 0.0,
+            "init_std"      : 0.02,
+            "proj_init_std" : 0.01,
+            "optim"         : "adam",
+            "lr"            : 5e-05,
+            "mom"           : 0.0,
+            "scheduler"     : "cosine",
+            "warmup_step"   : 0,
+            "decay_rate"    : 0.5,
+            "lr_min"        : 0.0,
             "clip": 0.25,
             "clip_nonemb": False,
             "eta_min": 0.0,
@@ -203,18 +203,19 @@ if __name__ == "__main__":
     cutoffs, tie_projs = [], [False]
 
     for n_layer, d_model, batch_size in product(
-        args.n_layers, args.d_models, args.batch_sizes
+            args.n_layers, args.d_models, args.batch_sizes
     ):
 
-        n_layer, d_model, batch_size = int(n_layer), int(d_model), int(batch_size)
+        n_layer, d_model, batch_size = int(n_layer), int(d_model), int(
+            batch_size)
         if args.reload:
             if results.get(str((n_layer, d_model, batch_size))) is not None:
                 print(f"{(n_layer, d_model, batch_size)} already in results")
                 continue
 
-        corpus = get_lm_corpus(default_args.data, default_args.dataset)
-        ntokens = len(corpus.vocab)
-        default_args.n_token = ntokens
+        corpus = get_time_series(default_args.data, default_args.dataset)
+        nseries = len(corpus.vocab)
+        default_args.n_token = nseries
 
         if args.tracking:
             from experiment_impact_tracker.compute_tracker import ImpactTracker
@@ -226,7 +227,7 @@ if __name__ == "__main__":
         d_inner = d_model
 
         model = MemTransformerLM(
-            ntokens,
+            nseries,
             n_layer,
             n_head,
             d_model,

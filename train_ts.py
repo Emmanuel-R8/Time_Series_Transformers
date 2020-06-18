@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from data_utils import get_lm_corpus
+from data_utils import get_time_series
 from mem_transformer import MemTransformerLM
 from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel
@@ -222,10 +222,7 @@ def train_ts(args):
                 val_loss,
             )
         )
-        if args.dataset in ["enwik8", "text8"]:
-            log_str += " | bpc {:9.5f}".format(val_loss / math.log(2))
-        else:
-            log_str += " | valid ppl {:9.3f}".format(math.exp(val_loss))
+        log_str += " | bpc {:9.5f}".format(val_loss / math.log(2))
         logging(log_str)
         logging("-" * 100)
 
@@ -288,7 +285,7 @@ def train_ts(args):
 
             optimizer.step()
             parent_model.compute += openai_compute(
-                non_emb_param_count(parent_model, ntokens), data.numel(), 1
+                non_emb_param_count(parent_model, nseries), data.numel(), 1
             )
 
             # step-wise learning rate annealing
@@ -334,10 +331,7 @@ def train_ts(args):
                     )
                 )
 
-                if args.dataset in ["enwik8", "text8"]:
-                    log_str += " | bpc {:9.5f}".format(cur_loss / math.log(2))
-                else:
-                    log_str += " | ppl {:9.3f}".format(math.exp(cur_loss))
+                log_str += " | bpc {:9.5f}".format(cur_loss / math.log(2))
                 logging(log_str)
 
                 train_losses = []
@@ -598,24 +592,25 @@ def train_ts(args):
     ############################################################################
     # Load data
     ############################################################################
+    time_series_corpus = get_time_series(args.datadir, args.dataset)
+    nseries = len(time_series_corpus.vocab)
+    args.n_token = nseries
 
-    corpus = get_lm_corpus(args.datadir, args.dataset)
-    ntokens = len(corpus.vocab)
-    args.n_token = ntokens
-
-    eval_batch_size = 10
-    tr_iter = corpus.get_iterator(
-        "train", args.batch_size, args.tgt_len, device=device, ext_len=args.ext_len,
+    eval_batch_size = 20
+    tr_iter = time_series_corpus.get_iterator(
+        "train", args.batch_size, args.tgt_len, device=device,
+        ext_len=args.ext_len,
     )
-    va_iter = corpus.get_iterator(
+    va_iter = time_series_corpus.get_iterator(
         "valid",
         eval_batch_size,
         args.eval_tgt_len,
         device=device,
         ext_len=args.ext_len,
     )
-    te_iter = corpus.get_iterator(
-        "test", eval_batch_size, args.eval_tgt_len, device=device, ext_len=args.ext_len,
+    te_iter = time_series_corpus.get_iterator(
+        "test", eval_batch_size, args.eval_tgt_len, device=device,
+        ext_len=args.ext_len,
     )
 
     cutoffs, tie_projs = [], [False]
@@ -652,7 +647,7 @@ def train_ts(args):
 
     else:
         model = MemTransformerLM(
-            ntokens,
+            nseries,
             args.n_layer,
             args.n_head,
             args.d_model,
@@ -679,7 +674,7 @@ def train_ts(args):
         # ensure embedding init is not overridden by out_layer in case of
         # weight sharing
     args.n_all_param = sum([p.nelement() for p in model.parameters()])
-    args.n_nonemb_param = non_emb_param_count(model, ntokens)
+    args.n_nonemb_param = non_emb_param_count(model, nseries)
 
     logging("=" * 100)
     for k, v in args.__dict__.items():
@@ -821,18 +816,11 @@ def train_ts(args):
     # Run on test data.
     test_loss = evaluate(te_iter, para_model)
     logging("=" * 100)
-    if args.dataset in ["enwik8", "text8"]:
-        logging(
-            "| End of training | test loss {:5.2f} | test bpc {:9.5f}".format(
-                test_loss, test_loss / math.log(2)
-            )
+    logging(
+        "| End of training | test loss {:5.2f} | test bpc {:9.5f}".format(
+            test_loss, test_loss / math.log(2)
         )
-    else:
-        logging(
-            "| End of training | test loss {:5.2f} | test ppl {:9.3f}".format(
-                test_loss, math.exp(test_loss)
-            )
-        )
+    )
     logging("=" * 100)
 
 
