@@ -32,20 +32,6 @@ The pytorch implementation produces similar results to the TF codebase under the
 
 
 
-#### Replicate the "PPL = 24.03" result on `wikitext-103` with Transformer-XL
-
-- Make sure the machine have **4 GPUs**, each with **at least 11G memory**
-
-- Training
-
-  `bash run_wt103_base.sh train --work_dir PATH_TO_WORK_DIR`
-
-- Evaluation
-
-  `bash run_wt103_base.sh eval --work_dir PATH_TO_WORK_DIR`
-
-
-
 #### Other options:
 
 - `--batch_chunk`: this option allows one to trade speed for memory. For `batch_chunk > 1`, the program will split each training batch into `batch_chunk` sub-batches and perform forward and backward on each sub-batch sequentially, with the gradient accumulated and divided by `batch_chunk`. Hence, the memory usage will propertionally lower while the computation time will inversely higher. 

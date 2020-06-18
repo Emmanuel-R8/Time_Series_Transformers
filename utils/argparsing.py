@@ -15,13 +15,6 @@ parser = argparse.ArgumentParser(description="PyTorch Transformer Language Model
 parser.add_argument(
     "--datadir", type=str, default="./data/enwik8", help="location of the data corpus"
 )
-parser.add_argument(
-    "--dataset",
-    type=str,
-    default="enwik8",
-    choices=["wt103", "lm1b", "enwik8", "text8"],
-    help="dataset name",
-)
 parser.add_argument("--n_layer", type=int, default=12, help="number of total layers")
 parser.add_argument("--n_head", type=int, default=10, help="number of heads")
 parser.add_argument("--d_head", type=int, default=50, help="head dimension")

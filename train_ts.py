@@ -63,6 +63,7 @@ def train_ts(args):
     def build_scheduler(optimizers, args):
         optimizer, optimizer_sparse = optimizers
         scheduler_sparse = None
+
         if args.scheduler == "cosine":
             # here we do not set eta_min to lr_min to be backward compatible
             # because in previous versions eta_min is default to 0
@@ -70,6 +71,7 @@ def train_ts(args):
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 optimizer, args.max_step, eta_min=args.eta_min
             )  # should use eta_min arg
+
         elif args.scheduler == "inv_sqrt":
             # originally used for Transformer (in Attention is all you need)
             def lr_lambda(step):
@@ -84,6 +86,7 @@ def train_ts(args):
                     )
 
             scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
         elif args.scheduler == "dev_perf":
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
@@ -91,6 +94,7 @@ def train_ts(args):
                 patience=args.patience,
                 min_lr=args.lr_min,
             )
+
         elif args.scheduler == "constant":
             pass
 
@@ -103,6 +107,7 @@ def train_ts(args):
     # Training code
     ###############################################################################
     def evaluate(eval_iter, model):
+
         # Turn on evaluation mode which disables dropout.
         model.eval()
 
@@ -569,7 +574,8 @@ def train_ts(args):
     if torch.cuda.is_available():
         if not args.cuda:
             print(
-                "WARNING: You have a CUDA device, so you should probably run with --cuda"
+                "WARNING: You have a CUDA device, so you should probably run "
+                "with --cuda "
             )
         else:
             torch.cuda.manual_seed_all(args.seed)
@@ -625,6 +631,7 @@ def train_ts(args):
         init_std=args.init_std,
         proj_init_std=args.proj_init_std,
     )
+
     if args.restart and not args.fp16:
         if args.restart_from is not None:
             model_name = f"model_{args.restart_from}.pt"
@@ -642,6 +649,7 @@ def train_ts(args):
             model = model.float()
         model.apply(update_dropout)
         model.apply(update_dropatt)
+
     else:
         model = MemTransformerLM(
             ntokens,
@@ -720,6 +728,7 @@ def train_ts(args):
         scheduler.base_lrs = [args.lr] * len(scheduler.base_lrs)
     else:
         train_step = model.training_steps
+
     best_val_loss = None
 
     # Reload previous step number in case of default_args.restart
