@@ -53,7 +53,6 @@ The pytorch implementation produces similar results to the TF codebase under the
 - `--fp16` and `--dynamic-loss-scale`: Run in pseudo-fp16 mode (fp16 storage fp32 math) with dynamic loss scaling. 
   - Note: to explore the `--fp16` option, please make sure the `apex` package is installed (https://github.com/NVIDIA/apex/).
 - To see performance without the recurrence mechanism, simply use `mem_len=0` in all your scripts.
-- To see performance of a standard Transformer without relative positional encodings or recurrence mechanisms, use `attn_type=2` and `mem_len=0`.
 
 
 #### Other datasets:

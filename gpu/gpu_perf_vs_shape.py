@@ -159,7 +159,6 @@ if __name__ == "__main__":
             "not_tied": False,
             "div_val": 1,
             "pre_lnorm": False,
-            "attn_type": 0,
             "dropout": 0.0,
             "dropatt": 0.0,
             "init": "normal",
@@ -245,7 +244,6 @@ if __name__ == "__main__":
             mem_len=default_args.mem_len,
             cutoffs=cutoffs,
             same_length=default_args.same_length,
-            attn_type=default_args.attn_type,
             clamp_len=default_args.clamp_len,
         )
         initialization_func = partial(

@@ -2,18 +2,20 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import pytorch_lightning as lt
 
-class AdaptiveLogSigmoid(nn.Module):
+
+class AdaptiveLogSigmoid(lt.LightningModule):
     def __init__(self, in_features, n_classes, cutoffs, keep_order=False):
         super(AdaptiveLogSigmoid, self).__init__()
 
         cutoffs = list(cutoffs)
 
         if (
-            cutoffs != sorted(cutoffs)
-            or min(cutoffs) <= 0
-            or max(cutoffs) >= (n_classes - 1)
-            or len(set(cutoffs)) != len(cutoffs)
+                cutoffs != sorted(cutoffs)
+                or min(cutoffs) <= 0
+                or max(cutoffs) >= (n_classes - 1)
+                or len(set(cutoffs)) != len(cutoffs)
             or any([int(c) != c for c in cutoffs])
         ):
 

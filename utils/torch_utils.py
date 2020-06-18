@@ -1,5 +1,7 @@
 import torch
 
+from pytorch_lightning.core.lightning import LightningModule
+
 
 def repeat_parameter(parameter, *sizes):
     parameter.data = parameter.data.repeat(*sizes)
@@ -30,7 +32,8 @@ def excluded_from_params(parameter: torch.nn.Parameter, vocab_size=-1):
     return vocab_size in parameter.shape
 
 
-def non_emb_param_count(model: torch.nn.Module, vocab_size=-1):
+def non_emb_param_count(model: LightningModule, vocab_size=-1):
     return sum(
-        p.numel() for p in model.parameters() if not excluded_from_params(p, vocab_size)
+        p.numel() for p in model.parameters() if
+        not excluded_from_params(p, vocab_size)
     )

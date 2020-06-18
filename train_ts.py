@@ -2,7 +2,7 @@
 import time
 import math
 import os
-import sys
+
 import itertools
 from functools import partial
 import warnings
@@ -59,8 +59,6 @@ def parallelize_model(model, args):
 
 
 def train_ts(args):
-
-    train_step = 0
 
     def build_scheduler(optimizers, args):
         optimizer, optimizer_sparse = optimizers
@@ -664,7 +662,6 @@ def train_ts(args):
             mem_len=args.mem_len,
             cutoffs=cutoffs,
             same_length=args.same_length,
-            attn_type=args.attn_type,
             clamp_len=args.clamp_len,
         )
         model.apply(initialization_func)

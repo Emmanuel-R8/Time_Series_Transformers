@@ -51,13 +51,6 @@ parser.add_argument(
     action="store_true",
     help="apply LayerNorm to the input instead of the output",
 )
-parser.add_argument(
-    "--attn_type",
-    type=int,
-    default=0,
-    help="attention type. 0 for ours, 1 for Shaw et al,"
-    "2 for Vaswani et al, 3 for Al Rfou et al.",
-)
 parser.add_argument("--dropout", type=float, default=0.0, help="global dropout rate")
 parser.add_argument(
     "--dropatt", type=float, default=0.0, help="attention probability dropout rate"

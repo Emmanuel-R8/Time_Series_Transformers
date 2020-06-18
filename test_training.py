@@ -4,15 +4,14 @@ import train_ts
 from utils.argparsing import parser
 
 #%%
-
 # Test with very unusual value to track errors in tensor sizes
 arguments = parser.parse_args(
     "--datadir ./data/enwik8 \
      --dataset enwik8 \
-     --n_layer 3 \
-     --d_model 256 \
-     --n_head 5 \
-     --d_head 61 \
+     --n_layer 2 \
+     --d_model 128 \
+     --n_head 8 \
+     --d_head 16 \
      --d_inner 17 \
      --dropout 0.1 \
      --dropatt 0.0 \
@@ -20,10 +19,10 @@ arguments = parser.parse_args(
      --lr 0.00025 \
      --warmup_step 0 \
      --max_step 10000 \
-     --tgt_len 13 \
-     --mem_len 19 \
-     --eval_tgt_len 59 \
-     --batch_size 11 ".split()
+     --tgt_len 64 \
+     --mem_len 16 \
+     --eval_tgt_len 32 \
+     --batch_size 8 ".split()
 )
 
 #%%
