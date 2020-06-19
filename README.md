@@ -1,15 +1,21 @@
-# Warning
+## Introduction
 
-This is a heavily modified version of the original Transformer-XL repository ([](https://github.com/kimiyoung/transformer-xl)).
+This directory contains a Pytorch/Pytorch Lightning implementation of transformers applied to time series. 
+We focus on Transformer-XL and Compressive Transformers. 
 
-This version is aimed at using the network design for time series instead of text embeddings. It is targetting PyTorch; TF code has been removed.
+Transformer-XL is described in this paper 
+[Transformer-XL: Attentive Language Models Beyond a Fixed-Length Context](http://arxiv.org/abs/1901.02860)
+by Zihang Dai\*, Zhilin Yang\*, Yiming Yang, Jaime Carbonell, Quoc V. Le, Ruslan Salakhutdinov 
+(*: equal contribution) Preprint 2018. 
 
-# Transformer-XL: Attentive Language Models Beyond a Fixed-Length Context
+Part of this code is from the authors at [https://github.com/kimiyoung/transformer-xl]().
 
-This repository contains the code in both **PyTorch** and **TensorFlow** for our paper
->[Transformer-XL: Attentive Language Models Beyond a Fixed-Length Context](http://arxiv.org/abs/1901.02860)
+## Prerequisite
 
->Zihang Dai\*, Zhilin Yang\*, Yiming Yang, Jaime Carbonell, Quoc V. Le, Ruslan Salakhutdinov (*: equal contribution)
+See `requirements.txt`. All installed via `pip` instead of `conda`.
 
->Preprint 2018
+## Data Prepration
+
+See `etf_data_prep.py` in `data/etf`.
+
 
