@@ -154,7 +154,7 @@ if __name__ == "__main__":
     default_args = DotDict(
         {
             "data"          : "../data/etf",
-            "dataset"       : "allData.csv",
+            "dataset"       : "allData.pickle",
             "batch_chunk"   : 1,
             "not_tied"      : False,
             "div_val"       : 1,

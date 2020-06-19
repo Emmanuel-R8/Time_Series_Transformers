@@ -7,7 +7,7 @@ from utils.argparsing import parser
 # Test with very unusual value to track errors in tensor sizes
 arguments = parser.parse_args(
     "--datadir ./data/etf \
-     --dataset allData.csv \
+     --dataset allData.pickle \
      --n_layer 2 \
      --d_model 128 \
      --n_head 8 \
@@ -22,7 +22,7 @@ arguments = parser.parse_args(
      --tgt_len 64 \
      --mem_len 16 \
      --eval_tgt_len 32 \
-     --batch_size 8 ".split()
+     --d_batch 8 ".split()
 )
 
 #%%

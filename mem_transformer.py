@@ -8,6 +8,8 @@ from pytorch_lightning.core.lightning import LightningModule
 
 from utils.proj_adaptive_sigmoid import ProjectedAdaptiveSigmoid
 
+import data_utils
+
 
 class PositionalEmbedding(LightningModule):
     def __init__(self, d_emb):
@@ -37,18 +39,19 @@ class PositionalEmbedding(LightningModule):
         pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
 
         if bsz is not None:
-            # DIMS: pos_seq x bsz x (2 x d_emb)
+            # DIMS: pos_seq x d_batch x (2 x d_emb)
             pos_emb = pos_emb[:, None, :].expand(-1, bsz, -1)
         else:
-            # DIMS: pos_seq x bsz x (2 x d_emb)
+            # DIMS: pos_seq x d_batch x (2 x d_emb)
             pos_emb = pos_emb[:, None, :]
 
-        # DIMS: pos_seq x bsz x (2 x n_emb)
-        assert pos_emb.size()[0] == pos_seq.size()[0], "pos_emb.size()[0] != pos_seq"
+        # DIMS: pos_seq x d_batch x (2 x n_emb)
+        assert pos_emb.size()[0] == pos_seq.size()[
+            0], "pos_emb.size()[0] != pos_seq"
         if bsz is not None:
-            assert pos_emb.size()[1] == bsz, "pos_emb.size()[1] != bsz"
+            assert pos_emb.size()[1] == bsz, "pos_emb.size()[1] != d_batch"
         assert (
-            pos_emb.size()[2] == 2 * self.n_emb
+                pos_emb.size()[2] == 2 * self.n_emb
         ), "pos_emb.size()[2] != 2 * self.n_emb"
 
         return pos_emb
@@ -82,26 +85,26 @@ class PositionwiseFF(LightningModule):
         self.pre_lnorm = pre_lnorm
 
     def forward(self, input):
-        # DIMS: input -> tgt_len x bsz x d_model
+        # DIMS: input -> tgt_len x d_batch x d_model
         assert (
-            input.size()[2] == self.d_model
+                input.size()[2] == self.d_model
         ), "PositionWideFF/forward: input.size()[0] != self.d_model"
 
         if self.pre_lnorm:
             # layer normalization + positionwise feed-forward
-            # DIMS: core_out -> tgt_len x bsz x d_model
+            # DIMS: core_out -> tgt_len x d_batch x d_model
             core_out = self.CoreNet(self.layer_norm(input))
 
             # residual connection
-            # DIMS: output -> tgt_len x bsz x d_model
+            # DIMS: output -> tgt_len x d_batch x d_model
             output = core_out + input
         else:
             # positionwise feed-forward
-            # DIMS: core_out -> tgt_len x bsz x d_model
+            # DIMS: core_out -> tgt_len x d_batch x d_model
             core_out = self.CoreNet(input)
 
             # residual connection + layer normalization
-            # DIMS: output -> tgt_len x bsz x d_model
+            # DIMS: output -> tgt_len x d_batch x d_model
             output = self.layer_norm(input + core_out)
 
         return output
@@ -138,7 +141,7 @@ class MultiHeadAttn(LightningModule):
 
     def forward(self, h, attn_mask=None, mems=None):
         # multihead attention
-        # [hlen x bsz x n_head x d_head]
+        # [hlen x d_batch x n_head x d_head]
 
         if mems is not None:
             c = torch.cat([mems, h], 0)
@@ -159,21 +162,22 @@ class MultiHeadAttn(LightningModule):
         head_k = head_k.view(c.size(0), c.size(1), self.n_head, self.d_head)
         head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
 
-        # [qlen x klen x bsz x n_head]
+        # [qlen x klen x d_batch x n_head]
         attn_score = torch.einsum("ibnd,jbnd->ijbn", (head_q, head_k))
         attn_score.mul_(self.scale)
         if attn_mask is not None and attn_mask.any().item():
             if attn_mask.dim() == 2:
-                attn_score.masked_fill_(attn_mask[None, :, :, None], -float("inf"))
+                attn_score.masked_fill_(attn_mask[None, :, :, None],
+                                        -float("inf"))
             elif attn_mask.dim() == 3:
                 attn_score.masked_fill_(attn_mask[:, :, :, None], -float("inf"))
 
-        # [qlen x klen x bsz x n_head]
+        # [qlen x klen x d_batch x n_head]
         attn_prob = torch.sigmoid(attn_score, dim=1)
         attn_prob = self.dropatt(attn_prob)
 
-        # [qlen x klen x bsz x n_head] x [klen x bsz x n_head x d_head] ->
-        # [qlen x bsz x n_head x d_head]
+        # [qlen x klen x d_batch x n_head] x [klen x d_batch x n_head x d_head] ->
+        # [qlen x d_batch x n_head x d_head]
         attn_vec = torch.einsum("ijbn,jbnd->ibnd", (attn_prob, head_v))
         attn_vec = attn_vec.contiguous().view(
             attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head
@@ -205,7 +209,7 @@ class RelMultiHeadAttn(LightningModule):
             tgt_len=None,
             ext_len=None,
             mem_len=None,
-        pre_lnorm=False,
+            pre_lnorm=False,
     ):
         super(RelMultiHeadAttn, self).__init__()
 
@@ -288,7 +292,8 @@ class RelMultiHeadAttn(LightningModule):
             ones = torch.ones((x.size(2), x.size(3)))
 
             # Return a lower triangular matrix
-            x = x * torch.tril(ones, diagonal=x.size(3) - x.size(2))[None, None, :, :]
+            x = x * torch.tril(ones, diagonal=x.size(3) - x.size(2))[None, None,
+                    :, :]
 
         return x
 
@@ -301,12 +306,13 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         super(RelPartialLearnableMultiHeadAttn, self).__init__(*args, **kwargs)
 
         # DIMS: d_model x n_head*d_head
-        self.r_net = nn.Linear(self.d_model, self.n_head * self.d_head, bias=False)
+        self.r_net = nn.Linear(self.d_model, self.n_head * self.d_head,
+                               bias=False)
 
     def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
 
-        # DIMS: w -> tgt_len x bsz x d_model
+        # DIMS: w -> tgt_len x d_batch x d_model
         # qlen = tgt_len
         # DIMS: r -> tgt_len x 1 x d_model
         # rlen = tgt_len
@@ -318,24 +324,24 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
 
             # Concatenate memories + current segment along 1st dimension
             # DIMS: mems -> n_mem x d_model
-            # DIMS: w ->    tgt_len x bsz x d_model
+            # DIMS: w ->    tgt_len x d_batch x d_model
             # DIMS: cat ->  (n_mem+n_model) x d_model
 
             # CHECK: mems has to be copied to have one per training value in
             # the batch
-            # DIMS: w -> tgt_len x bsz x d_model
+            # DIMS: w -> tgt_len x d_batch x d_model
             # DIMS: mems -> ???
-            # DIMS: cat -> (tgt_len + ???) x bsz x d_model
+            # DIMS: cat -> (tgt_len + ???) x d_batch x d_model
             cat = torch.cat([mems, w], 0)
             if self.pre_lnorm:
-                # DIMS: cat ->     tgt_len x bsz x d_model
+                # DIMS: cat ->     tgt_len x d_batch x d_model
                 # DIMS: qkc_net -> d_model x 3*n_head*d_head
-                # DIMS: w_heads -> (tgt_len + ???) x bsz x 3*n_head*d_head
+                # DIMS: w_heads -> (tgt_len + ???) x d_batch x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(cat))
             else:
-                # DIMS: cat ->     tgt_len x bsz x d_model
+                # DIMS: cat ->     tgt_len x d_batch x d_model
                 # DIMS: qkc_net -> d_model x 3*n_head*d_head
-                # DIMS: w_heads -> (tgt_len + ???) x bsz x 3*n_head*d_head
+                # DIMS: w_heads -> (tgt_len + ???) x d_batch x 3*n_head*d_head
                 w_heads = self.qkv_net(cat)
 
             # DIMS: r -> tgt_len x 1 x d_model
@@ -343,24 +349,24 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
             # DIMS: r_head_k -> tgt_len x n_head x d_head
             r_head_k = self.r_net(r)
 
-            # DIMS: w_heads -> tgt_len x bsz x 3*n_head*d_head
-            # DIMS: w_head_q -> tgt_len x bsz x n_head x d_head
-            # DIMS: w_head_k -> tgt_len x bsz x n_head x d_head
-            # DIMS: w_head_v -> tgt_len x bsz x n_head x d_head
+            # DIMS: w_heads -> tgt_len x d_batch x 3*n_head*d_head
+            # DIMS: w_head_q -> tgt_len x d_batch x n_head x d_head
+            # DIMS: w_head_k -> tgt_len x d_batch x n_head x d_head
+            # DIMS: w_head_v -> tgt_len x d_batch x n_head x d_head
             w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
 
-            # DIMS: w_head_q -> qlen x bsz x n_head x d_head
+            # DIMS: w_head_q -> qlen x d_batch x n_head x d_head
             w_head_q = w_head_q[-qlen:]
         else:
             if self.pre_lnorm:
-                # DIMS: w -> tgt_len x bsz x d_model
+                # DIMS: w -> tgt_len x d_batch x d_model
                 # DIMS: qkv_net -> d_model x 3*n_head*d_head
-                # DIMS: w_heads -> tgt_len x bsz x 3*n_head*d_head
+                # DIMS: w_heads -> tgt_len x d_batch x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(w))
             else:
-                # DIMS: w -> tgt_len x bsz x d_model
+                # DIMS: w -> tgt_len x d_batch x d_model
                 # DIMS: qkv_net -> d_model x 3*n_head*d_head
-                # DIMS: w_heads -> tgt_len x bsz x 3*n_head*d_head
+                # DIMS: w_heads -> tgt_len x d_batch x 3*n_head*d_head
                 w_heads = self.qkv_net(w)
 
             # DIMS: r -> tgt_len x 1 x d_model
@@ -368,75 +374,76 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
             # DIMS: r_head_k -> tgt_len x n_head x d_head
             r_head_k = self.r_net(r)
 
-            # DIMS: w_heads -> tgt_len x bsz x 3*n_head*d_head
-            # DIMS: w_head_q -> tgt_len x bsz x n_head x d_head
-            # DIMS: w_head_k -> tgt_len x bsz x n_head x d_head
-            # DIMS: w_head_v -> tgt_len x bsz x n_head x d_head
+            # DIMS: w_heads -> tgt_len x d_batch x 3*n_head*d_head
+            # DIMS: w_head_q -> tgt_len x d_batch x n_head x d_head
+            # DIMS: w_head_k -> tgt_len x d_batch x n_head x d_head
+            # DIMS: w_head_v -> tgt_len x d_batch x n_head x d_head
             w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
 
         # klen = tgt_len
         klen = w_head_k.size(0)
 
-        # DIMS: qlen x bsz x n_head x d_head
+        # DIMS: qlen x d_batch x n_head x d_head
         w_head_q = w_head_q.view(qlen, bsz, self.n_head, self.d_head)
 
-        # DIMS: klen x bsz x n_head x d_head
+        # DIMS: klen x d_batch x n_head x d_head
         w_head_k = w_head_k.view(klen, bsz, self.n_head, self.d_head)
 
-        # DIMS: klen x bsz x n_head x d_head
+        # DIMS: klen x d_batch x n_head x d_head
         w_head_v = w_head_v.view(klen, bsz, self.n_head, self.d_head)
 
         # DIMS: rlen x n_head x d_head
         r_head_k = r_head_k.view(rlen, self.n_head, self.d_head)
 
         # compute attention score
-        # DIMS: w_head_q ->  qlen x bsz x n_head x d_head
+        # DIMS: w_head_q ->  qlen x d_batch x n_head x d_head
         # DIMS: r_w_bias ->               n_head x n_head
-        # DIMS: rw_head_q -> qlen x bsz x n_head x d_head
+        # DIMS: rw_head_q -> qlen x d_batch x n_head x d_head
         rw_head_q = w_head_q + r_w_bias
 
-        # DIMS: rw_head_q -> qlen x bsz x n_head x d_head
-        # DIMS: w_head_k ->  klen x bsz x n_head x d_head
-        # DIMS: AC ->        bsz x n_head x qlen x klen
+        # DIMS: rw_head_q -> qlen x d_batch x n_head x d_head
+        # DIMS: w_head_k ->  klen x d_batch x n_head x d_head
+        # DIMS: AC ->        d_batch x n_head x qlen x klen
         AC = torch.einsum("ibnd,jbnd->bnij", (rw_head_q, w_head_k))
 
-        # DIMS: w_head_q ->  qlen x bsz x n_head x d_head
+        # DIMS: w_head_q ->  qlen x d_batch x n_head x d_head
         # DIMS: r_r_bias ->               n_head x n_head
-        # DIMS: rr_head_q -> qlen x bsz x n_head x d_head
+        # DIMS: rr_head_q -> qlen x d_batch x n_head x d_head
         rr_head_q = w_head_q + r_r_bias
 
-        # DIMS: rr_head_q -> qlen x bsz x n_head x d_head
+        # DIMS: rr_head_q -> qlen x d_batch x n_head x d_head
         # DIMS: r_head_k ->        rlen x n_head x d_head
-        # DIMS: BD ->        bsz x n_head x qlen x rlen
+        # DIMS: BD ->        d_batch x n_head x qlen x rlen
         BD = torch.einsum("ibnd,jnd->bnij", (rr_head_q, r_head_k))
 
-        # DIMS: BD -> bsz x n_head x qlen x rlen
+        # DIMS: BD -> d_batch x n_head x qlen x rlen
         BD = self._rel_shift(BD)
 
-        # DIMS: AC -> bsz x n_head x qlen x klen
-        # DIMS: BD -> bsz x n_head x qlen x rlen
-        # DIMS: attn_score -> bsz x n_head x qlen x rlen
+        # DIMS: AC -> d_batch x n_head x qlen x klen
+        # DIMS: BD -> d_batch x n_head x qlen x rlen
+        # DIMS: attn_score -> d_batch x n_head x qlen x rlen
         # klen = rlen = tgt_len
         attn_score = AC + BD
         attn_score.mul_(self.scale)
 
         # compute attention probability
         # DIMS: attn_mask ->                 tgt_len x tgt_len x 1
-        # DIMS: attn_score -> bsz x n_head x tgt_len x tgt_len
+        # DIMS: attn_score -> d_batch x n_head x tgt_len x tgt_len
         if attn_mask is not None and attn_mask.any().item():
             if attn_mask.dim() == 2:
-                attn_score.masked_fill_(attn_mask[None, None, :, :], -float("inf"))
+                attn_score.masked_fill_(attn_mask[None, None, :, :],
+                                        -float("inf"))
             elif attn_mask.dim() == 3:
                 attn_score.masked_fill_(attn_mask[:, None, :, :], -float("inf"))
 
-        # [bsz x n_head x qlen x klen]
+        # [d_batch x n_head x qlen x klen]
         attn_prob = torch.sigmoid(attn_score)
         attn_prob = self.dropatt(attn_prob)
 
         # compute attention vector
         attn_vec = torch.einsum("bnij,jbnd->ibnd", (attn_prob, w_head_v))
 
-        # [qlen x bsz x n_head x d_head]
+        # [qlen x d_batch x n_head x d_head]
         attn_vec = attn_vec.contiguous().view(
             attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head
         )
@@ -490,13 +497,13 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
 
         klen = w_head_k.size(0)
 
-        # qlen x bsz x n_head x d_head
+        # qlen x d_batch x n_head x d_head
         w_head_q = w_head_q.view(qlen, bsz, self.n_head, self.d_head)
 
-        # qlen x bsz x n_head x d_head
+        # qlen x d_batch x n_head x d_head
         w_head_k = w_head_k.view(klen, bsz, self.n_head, self.d_head)
 
-        # qlen x bsz x n_head x d_head
+        # qlen x d_batch x n_head x d_head
         w_head_v = w_head_v.view(klen, bsz, self.n_head, self.d_head)
 
         if klen > r_emb.size(0):
@@ -509,38 +516,39 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
             r_bias = r_bias[-klen:]
 
         # compute attention score
-        # qlen x bsz x n_head x d_head
+        # qlen x d_batch x n_head x d_head
         rw_head_q = w_head_q + r_w_bias[None]
 
-        # qlen x klen x bsz x n_head
+        # qlen x klen x d_batch x n_head
         AC = torch.einsum("ibnd,jbnd->ijbn", (rw_head_q, w_head_k))
 
-        # qlen x klen x bsz x n_head
+        # qlen x klen x d_batch x n_head
         B_ = torch.einsum("ibnd,jnd->ijbn", (w_head_q, r_emb))
 
         # 1    x klen x 1   x n_head
         D_ = r_bias[None, :, None]
         BD = self._rel_shift(B_ + D_)
 
-        # [qlen x klen x bsz x n_head]
+        # [qlen x klen x d_batch x n_head]
         attn_score = AC + BD
         attn_score.mul_(self.scale)
 
         # compute attention probability
         if attn_mask is not None and attn_mask.any().item():
             if attn_mask.dim() == 2:
-                attn_score.masked_fill_(attn_mask[None, :, :, None], -float("inf"))
+                attn_score.masked_fill_(attn_mask[None, :, :, None],
+                                        -float("inf"))
             elif attn_mask.dim() == 3:
                 attn_score.masked_fill_(attn_mask[:, :, :, None], -float("inf"))
 
-        # [qlen x klen x bsz x n_head]
+        # [qlen x klen x d_batch x n_head]
         attn_prob = torch.sigmoid(attn_score, dim=1)
         attn_prob = self.dropatt(attn_prob)
 
         # compute attention vector
         attn_vec = torch.einsum("ijbn,jbnd->ibnd", (attn_prob, w_head_v))
 
-        # [qlen x bsz x n_head x d_head]
+        # [qlen x d_batch x n_head x d_head]
         attn_vec = attn_vec.contiguous().view(
             attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head
         )
@@ -571,7 +579,6 @@ class DecoderLayer(LightningModule):
         )
 
     def forward(self, dec_inp, dec_attn_mask=None, mems=None):
-
         output = self.dec_attn(dec_inp, attn_mask=dec_attn_mask, mems=mems)
         output = self.pos_ff(output)
 
@@ -589,8 +596,8 @@ class RelLearnableDecoderLayer(LightningModule):
             d_model, d_inner, dropout, pre_lnorm=kwargs.get("pre_lnorm")
         )
 
-    def forward(self, dec_inp, r_emb, r_w_bias, r_bias, dec_attn_mask=None, mems=None):
-
+    def forward(self, dec_inp, r_emb, r_w_bias, r_bias, dec_attn_mask=None,
+                mems=None):
         output = self.dec_attn(
             dec_inp, r_emb, r_w_bias, r_bias, attn_mask=dec_attn_mask, mems=mems
         )
@@ -613,8 +620,8 @@ class RelPartialLearnableDecoderLayer(LightningModule):
             d_model, d_inner, dropout, pre_lnorm=kwargs.get("pre_lnorm")
         )
 
-    def forward(self, dec_inp, r, r_w_bias, r_r_bias, dec_attn_mask=None, mems=None):
-
+    def forward(self, dec_inp, r, r_w_bias, r_r_bias, dec_attn_mask=None,
+                mems=None):
         # DIMS: r -> tgt_len x 1 x (d_model + 1)
         # DIMS: r_w_bias -> n_head x d_head
         # DIMS: r_r_bias -> n_head x d_head
@@ -652,13 +659,15 @@ class AdaptiveEmbedding(LightningModule):
                 nn.Embedding(n_token, d_embed, sparse=(sample_softmax > 0))
             )
             if d_proj != d_embed:
-                self.emb_projs.append(nn.Parameter(torch.Tensor(d_proj, d_embed)))
+                self.emb_projs.append(
+                    nn.Parameter(torch.Tensor(d_proj, d_embed)))
         else:
             for i in range(len(self.cutoffs)):
                 l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
                 d_emb_i = d_embed // (div_val ** i)
                 self.emb_layers.append(nn.Embedding(r_idx - l_idx, d_emb_i))
-                self.emb_projs.append(nn.Parameter(torch.Tensor(d_proj, d_emb_i)))
+                self.emb_projs.append(
+                    nn.Parameter(torch.Tensor(d_proj, d_emb_i)))
 
     def forward(self, inp):
         if self.div_val == 1:
@@ -669,7 +678,8 @@ class AdaptiveEmbedding(LightningModule):
             param = next(self.parameters())
             inp_flat = inp.view(-1)
             emb_flat = torch.zeros(
-                [inp_flat.size(0), self.d_proj], dtype=param.dtype, device=param.device,
+                [inp_flat.size(0), self.d_proj], dtype=param.dtype,
+                device=param.device,
             )
             for i in range(len(self.cutoffs)):
                 l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
@@ -704,18 +714,18 @@ class MemTransformerLM(LightningModule):
             d_inner,
             dropout,
             dropatt,
-        tie_weight=True,
-        d_embed=None,
-        div_val=1,
-        tie_projs=[False],
-        pre_lnorm=False,
-        tgt_len=None,
-        ext_len=None,
-        mem_len=None,
-        cutoffs=[],
-        adapt_inp=False,
-        same_length=False,
-        clamp_len=-1,
+            tie_weight=True,
+            d_embed=None,
+            div_val=1,
+            tie_projs=[False],
+            pre_lnorm=False,
+            tgt_len=None,
+            ext_len=None,
+            mem_len=None,
+            cutoffs=[],
+            adapt_inp=False,
+            same_length=False,
+            clamp_len=-1,
     ):
         super(MemTransformerLM, self).__init__()
         self.n_token = n_token
@@ -789,7 +799,6 @@ class MemTransformerLM(LightningModule):
 
         # DIMS: n_head x n_head
         self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
-
 
     def reset_length(self, tgt_len, ext_len, mem_len):
         self.tgt_len = tgt_len
@@ -910,7 +919,8 @@ class MemTransformerLM(LightningModule):
         hidden, new_mems = self._forward(data, mems=mems)
 
         pred_hid = hidden[-tgt_len:]
-        loss = self.crit(pred_hid.reshape(-1, pred_hid.size(-1)), target.reshape(-1))
+        loss = self.crit(pred_hid.reshape(-1, pred_hid.size(-1)),
+                         target.reshape(-1))
         loss = loss.view(tgt_len, -1)
 
         if new_mems is None:
@@ -944,8 +954,6 @@ if __name__ == "__main__":
     tgt_len, mem_len, ext_len = 36, 36, 0
     data_len = tgt_len * 20
     args.n_token = 10000
-
-    import data_utils
 
     data = torch.LongTensor(data_len * B).random_(0, args.n_token).to(device)
     diter = data_utils.OrderedIterator(

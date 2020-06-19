@@ -10,27 +10,32 @@ from utils.vocabulary import Vocab
 
 
 class OrderedIterator():
-    def __init__(self, data, bsz, bptt, device="cpu", ext_len=None):
+    def __init__(self, data: torch.LongTensor, d_batch: int = 10,
+                 n_batch_per_test: int = 1,
+                 device="cpu",
+                 ext_len=None):
         """
             data -- LongTensor -- the LongTensor is strictly ordered
         """
-        self.bsz = bsz
-        self.bptt = bptt
-        self.ext_len = ext_len if ext_len is not None else 0
+        self.d_batch = d_batch
+        self.bptt = n_batch_per_test
+        self.ext_len = 0 if ext_len is None else ext_len
 
         self.device = device
 
-        # Work out how cleanly we can divide the dataset into bsz parts.
-        self.n_step = data.size(0) // bsz
+        # Work out how cleanly we can divide the dataset into d_batch parts.
+        self.n_dates = data.size(0)  # number of training dates
+        self.n_batch = self.n_dates // d_batch
 
-        # Trim off any extra elements that wouldn't cleanly fit (remainders).
-        data = data.narrow(0, 0, self.n_step * bsz)
+        # Trim off any extra elements that wouldn't cleanly fit (stub).
+        # Remove the very beginning of the time series - keep the most recent
+        data = data.narrow(0, self.n_dates % d_batch, data.size(0))
 
-        # Evenly divide the data across the bsz batches.
-        self.data = data.view(bsz, -1).t().contiguous().to(device)
+        # Evenly divide the data across the d_batch batches.
+        self.data = data.view(d_batch, -1).t().contiguous().to(device)
 
         # Number of mini-batches
-        self.n_batch = (self.n_step + self.bptt - 1) // self.bptt
+        self.n_batch = (self.n_batch + self.bptt - 1) // self.bptt
 
     def get_batch(self, i, bptt=None):
         if bptt is None:
@@ -42,7 +47,7 @@ class OrderedIterator():
         beg_idx = max(0, i - self.ext_len)
 
         data = self.data[beg_idx:end_idx]
-        target = self.data[i + 1 : i + 1 + seq_len]
+        target = self.data[i + 1: i + 1 + seq_len]
 
         return data, target, seq_len
 
@@ -66,7 +71,7 @@ class OrderedIterator():
         return self.get_fixlen_iter()
 
 
-class TimeSeries(object):
+class TimeSeries():
     def __init__(self, path, dataset, *args, **kwargs):
         self.dataset = dataset
         self.vocab = Vocab(*args, **kwargs)
@@ -130,5 +135,5 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    corpus = get_time_series(args.datadir, args.dataset)
-    print("Vocab size : {}".format(len(corpus.vocab.idx2sym)))
+    time_series = get_time_series(args.datadir, args.dataset)
+    print("Vocab size : {}".format(len(time_series.vocab.idx2sym)))

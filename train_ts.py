@@ -14,6 +14,7 @@ import torch.optim as optim
 
 from data_utils import get_time_series
 from mem_transformer import MemTransformerLM
+
 from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel
 from utils.initialization import weights_init
@@ -22,8 +23,9 @@ from utils.torch_utils import non_emb_param_count, openai_compute
 
 
 ###############################################################################
-# Helper functions
-###############################################################################
+##
+## Helper functions
+##
 def update_dropout(m):
     classname = m.__class__.__name__
     if classname.find("Dropout") != -1:
@@ -59,7 +61,6 @@ def parallelize_model(model, args):
 
 
 def train_ts(args):
-
     def build_scheduler(optimizers, args):
         optimizer, optimizer_sparse = optimizers
         scheduler_sparse = None
@@ -85,7 +86,8 @@ def train_ts(args):
                         else step / (args.warmup_step ** 1.5)
                     )
 
-            scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+            scheduler = optim.lr_scheduler.LambdaLR(optimizer,
+                                                    lr_lambda=lr_lambda)
 
         elif args.scheduler == "dev_perf":
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
@@ -171,7 +173,8 @@ def train_ts(args):
     def build_optimizer(model, args, reload=False):
         optimizer_sparse = None
         if args.optim.lower() == "sgd":
-            optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.mom)
+            optimizer = optim.SGD(model.parameters(), lr=args.lr,
+                                  momentum=args.mom)
         elif args.optim.lower() == "adam":
             optimizer = optim.Adam(model.parameters(), lr=args.lr)
         elif args.optim.lower() == "adagrad":
@@ -188,7 +191,7 @@ def train_ts(args):
             logging(f"reloading {optim_file_name}")
             if os.path.exists(os.path.join(args.restart_dir, optim_name)):
                 with open(
-                    os.path.join(args.restart_dir, optim_name), "rb"
+                        os.path.join(args.restart_dir, optim_name), "rb"
                 ) as optim_file:
                     opt_state_dict = torch.load(optim_file)
                     try:
@@ -227,7 +230,7 @@ def train_ts(args):
         logging("-" * 100)
 
     def epoch_loop(
-        epoch, model, optimizers, schedulers,
+            epoch, model, optimizers, schedulers,
     ):
         nonlocal train_step
 
@@ -279,7 +282,8 @@ def train_ts(args):
                 train_losses.append(loss.float().item())
 
             if args.fp16:
-                torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
+                torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer),
+                                               args.clip)
             else:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
@@ -347,21 +351,24 @@ def train_ts(args):
                     if not args.debug:
                         if args.fp16:
                             with open(
-                                os.path.join(args.work_dir, "amp_checkpoint.pt"), "wb",
+                                    os.path.join(args.work_dir,
+                                                 "amp_checkpoint.pt"), "wb",
                             ) as f:
                                 checkpoint = {
-                                    "model": model.state_dict(),
+                                    "model"    : model.state_dict(),
                                     "optimizer": optimizer.state_dict(),
-                                    "amp": amp.state_dict(),
+                                    "amp"      : amp.state_dict(),
                                 }
                                 torch.save(checkpoint, f)
                         else:
                             with open(
-                                os.path.join(args.work_dir, "model.pt"), "wb"
+                                    os.path.join(args.work_dir, "model.pt"),
+                                    "wb"
                             ) as f:
                                 torch.save(parent_model, f)
                             with open(
-                                os.path.join(args.work_dir, "optimizer.pt"), "wb",
+                                    os.path.join(args.work_dir, "optimizer.pt"),
+                                    "wb",
                             ) as f:
                                 torch.save(optimizer.state_dict(), f)
 
@@ -375,17 +382,17 @@ def train_ts(args):
                 break
 
     def expand_model(
-        strategy,
-        integration,
-        integration_length,
-        n_add,
-        model: MemTransformerLM,
-        optimizers,
-        schedulers,
-        tr_iter,
-        va_iter,
-        epoch,
-        step,
+            strategy,
+            integration,
+            integration_length,
+            n_add,
+            model: MemTransformerLM,
+            optimizers,
+            schedulers,
+            tr_iter,
+            va_iter,
+            epoch,
+            step,
     ):
         optimizer, _ = optimizers
         scheduler, _ = schedulers
@@ -406,7 +413,8 @@ def train_ts(args):
 
         # infer example logits for reverse distillation
         if "reverse_distil" in integration:
-            first_logits = get_original_batches(model, tr_iter, integration_length)
+            first_logits = get_original_batches(model, tr_iter,
+                                                integration_length)
 
         # expansion
         logging(
@@ -419,8 +427,8 @@ def train_ts(args):
         # optimizer update
         optimizer.add_param_group(
             {
-                "params": new_layers.parameters(),
-                "lr": optimizer.param_groups[0]["lr"],
+                "params"    : new_layers.parameters(),
+                "lr"        : optimizer.param_groups[0]["lr"],
                 "initial_lr": optimizer.param_groups[0]["initial_lr"],
             }
         )
@@ -428,7 +436,8 @@ def train_ts(args):
 
         # training loop for reverse distillation
         if "reverse_distil" in integration:
-            fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration)
+            fit_to_previous_model(model, new_layers, tr_iter, first_logits,
+                                  integration)
 
         # freezing parameters for frozen restart, we do this afterwards else the
         # new layers get copied also without grads
@@ -445,13 +454,15 @@ def train_ts(args):
 
     def expand_state(param, state):
         if param.shape != state.shape:
-            ratios = [param.shape[i] // state.shape[i] for i in range(len(param.shape))]
+            ratios = [param.shape[i] // state.shape[i] for i in
+                      range(len(param.shape))]
             return state.repeat(*ratios)
         else:
             return state
 
     def widen_model(
-        strategy, ratio, model: MemTransformerLM, optimizers, va_iter, epoch, step,
+            strategy, ratio, model: MemTransformerLM, optimizers, va_iter,
+            epoch, step,
     ):
         optimizer, _ = optimizers
 
@@ -481,7 +492,8 @@ def train_ts(args):
         log_val(val_loss, step=step, compute=model.compute)
 
     # reverse distillation trainer
-    def fit_to_previous_model(model, new_layers, tr_iter, first_logits, integration):
+    def fit_to_previous_model(model, new_layers, tr_iter, first_logits,
+                              integration):
         mse_loss = torch.nn.MSELoss()
         if "partial" in integration:
             distil_optimizer, distil_optimizer_sparse = build_optimizer(
@@ -495,6 +507,7 @@ def train_ts(args):
             model, distil_optimizer = amp.initialize(
                 model, distil_optimizer, opt_level=args.fp16
             )
+
         model.train()
         if args.batch_chunk > 1:
             mems = [None for _ in range(args.batch_chunk)]
@@ -513,7 +526,8 @@ def train_ts(args):
                     target_logits = first_logits[i][batch].to(logits.device)
                     loss = mse_loss(logits, target_logits) / args.batch_chunk
                     if args.fp16:
-                        with amp.scale_loss(loss, distil_optimizer) as scaled_loss:
+                        with amp.scale_loss(loss,
+                                            distil_optimizer) as scaled_loss:
                             scaled_loss.backward()
                     else:
                         loss.backward()
@@ -579,7 +593,7 @@ def train_ts(args):
     ############################################################################
 
     assert args.ext_len >= 0, "extended context length must be non-negative"
-    assert args.batch_size % args.batch_chunk == 0
+    assert args.d_batch % args.batch_chunk == 0
 
     args.work_dir = "{}-{}".format(args.work_dir, args.dataset)
     args.work_dir = os.path.join(args.work_dir, time.strftime("%Y%m%d-%H%M%S"))
@@ -592,23 +606,23 @@ def train_ts(args):
     ############################################################################
     # Load data
     ############################################################################
-    time_series_corpus = get_time_series(args.datadir, args.dataset)
-    nseries = len(time_series_corpus.vocab)
+    time_series = get_time_series(args.datadir, args.dataset)
+    nseries = len(time_series.vocab)
     args.n_token = nseries
 
     eval_batch_size = 20
-    tr_iter = time_series_corpus.get_iterator(
-        "train", args.batch_size, args.tgt_len, device=device,
+    tr_iter = time_series.get_iterator(
+        "train", args.d_batch, args.tgt_len, device=device,
         ext_len=args.ext_len,
     )
-    va_iter = time_series_corpus.get_iterator(
+    va_iter = time_series.get_iterator(
         "valid",
         eval_batch_size,
         args.eval_tgt_len,
         device=device,
         ext_len=args.ext_len,
     )
-    te_iter = time_series_corpus.get_iterator(
+    te_iter = time_series.get_iterator(
         "test", eval_batch_size, args.eval_tgt_len, device=device,
         ext_len=args.ext_len,
     )
@@ -757,7 +771,8 @@ def train_ts(args):
             if args.widen and str(epoch - 1) in args.widen_dict:
                 ratio = int(args.widen_dict[str(epoch - 1)])
                 widen_model(
-                    args.widen, ratio, model, optimizers, va_iter, epoch, train_step,
+                    args.widen, ratio, model, optimizers, va_iter, epoch,
+                    train_step,
                 )
             epoch_loop(epoch, para_model, optimizers, schedulers)
             if train_step >= args.max_step:
@@ -769,22 +784,25 @@ def train_ts(args):
                     logging(f"saving model at the end of epoch {epoch}")
                     if args.fp16:
                         with open(
-                            os.path.join(args.work_dir, f"amp_checkpoint_{epoch}.pt"),
-                            "wb",
+                                os.path.join(args.work_dir,
+                                             f"amp_checkpoint_{epoch}.pt"),
+                                "wb",
                         ) as f:
                             checkpoint = {
-                                "model": model.state_dict(),
+                                "model"    : model.state_dict(),
                                 "optimizer": optimizer.state_dict(),
-                                "amp": amp.state_dict(),
+                                "amp"      : amp.state_dict(),
                             }
                             torch.save(checkpoint, f)
                     else:
                         with open(
-                            os.path.join(args.work_dir, f"model_{epoch}.pt"), "wb",
+                                os.path.join(args.work_dir,
+                                             f"model_{epoch}.pt"), "wb",
                         ) as f:
                             torch.save(model, f)
                         with open(
-                            os.path.join(args.work_dir, f"optimizer_{epoch}.pt"), "wb",
+                                os.path.join(args.work_dir,
+                                             f"optimizer_{epoch}.pt"), "wb",
                         ) as f:
                             torch.save(optimizer.state_dict(), f)
 

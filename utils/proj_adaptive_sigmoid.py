@@ -74,8 +74,8 @@ class ProjectedAdaptiveSigmoid(LightningModule):
 
     def forward(self, hidden, target, keep_order=False):
         """
-            hidden :: [len*bsz x d_proj]
-            target :: [len*bsz]
+            hidden :: [len*d_batch x d_proj]
+            target :: [len*d_batch]
         """
 
         if hidden.size(0) != target.size(0):
