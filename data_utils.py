@@ -23,7 +23,7 @@ class OrderedIterator():
 
         self.device = device
 
-        # Work out how cleanly we can divide the dataset into d_batch parts.
+        # Work out how cleanly we can divide the dataset into n_batch parts.
         self.n_dates = data.size(0)  # number of training dates
         self.n_batch = self.n_dates // d_batch
 
@@ -31,7 +31,7 @@ class OrderedIterator():
         # Remove the very beginning of the time series - keep the most recent
         data = data.narrow(0, self.n_dates % d_batch, data.size(0))
 
-        # Evenly divide the data across the d_batch batches.
+        # Evenly divide the data across the n_batch batches.
         self.data = data.view(d_batch, -1).t().contiguous().to(device)
 
         # Number of mini-batches

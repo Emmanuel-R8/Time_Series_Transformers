@@ -27,7 +27,7 @@ parser.add_argument(
     choices=["all", "valid", "test"],
     help="which split to evaluate",
 )
-parser.add_argument("--d_batch", type=int, default=10, help="batch size")
+parser.add_argument("--n_batch", type=int, default=10, help="batch size")
 parser.add_argument(
     "--tgt_len", type=int, default=5, help="number of tokens to predict"
 )
@@ -82,7 +82,7 @@ with open(os.path.join(args.work_dir, "model.pt"), "rb") as f:
 model = model.to(device)
 
 logging(
-    "Evaluating with d_batch {} tgt_len {} ext_len {} mem_len {} clamp_len {}".format(
+    "Evaluating with n_batch {} tgt_len {} ext_len {} mem_len {} clamp_len {}".format(
         args.batch_size,
         args.tgt_len,
         args.ext_len,

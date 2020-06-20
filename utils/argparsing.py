@@ -23,27 +23,27 @@ parser.add_argument("--d_head", type=int, default=50, help="head dimension")
 parser.add_argument("--d_embed", type=int, default=-1,
                     help="embedding dimension")
 parser.add_argument(
-    "--d_model", type=int, default=500, help="model dimension. Must be even."
+    "--n_model", type=int, default=500, help="model dimension. Must be even."
 )
 parser.add_argument("--d_inner", type=int, default=1000,
                     help="inner dimension in FF")
+# parser.add_argument(
+#     "--time_unit", type=str, default='month',
+#     choices=["day", "week", "month", "quarter"],
+#     help="Unit in which the all sets are measured. For example, n_batch 3 and "
+#          "time_unit='month' means that the batch are all the days within a 3 "
+#          "month-window. "
+# )
 parser.add_argument(
-    "--time_unit", type=str, default='month',
-    choices=["day", "week", "month", "quarter"],
-    help="Unit in which the all sets are measured. For example, d_batch 3 and "
-         "time_unit='month' means that the batch are all the days within a 3 "
-         "month-window. "
-)
-parser.add_argument(
-    "--d_train", type=int, default=12,
+    "--n_train", type=int, default=12,
     help="Size of the training set expressed in time_unit. Default: 12 months")
 parser.add_argument(
-    "--d_val", type=int, default=2,
+    "--n_val", type=int, default=2,
     help="Size of the validation set expressed in time_unit. Default: 2 months")
 parser.add_argument(
-    "--d_test", type=int, default=2,
+    "--n_test", type=int, default=2,
     help="Size of the test set expressed in time_unit. Default: 2 months")
-parser.add_argument("--d_batch", type=int, default=60, help="batch size")
+parser.add_argument("--n_batch", type=int, default=60, help="batch size")
 parser.add_argument(
     "--batch_chunk", type=int, default=1,
     help="split batch into chunks to save memory"

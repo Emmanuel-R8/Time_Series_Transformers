@@ -25,22 +25,22 @@ class DotDict(dict):
     __delattr__ = dict.__delitem__
 
 
-def head_repartition_rule(d_model):
-    if d_model > 256:
+def head_repartition_rule(n_model):
+    if n_model > 256:
         d_head = 64
-        n_head = d_model // d_head
-    elif d_model > 128:
+        n_head = n_model // d_head
+    elif n_model > 128:
         n_head = 8
-        d_head = d_model // n_head
-    elif d_model > 64:
+        d_head = n_model // n_head
+    elif n_model > 64:
         n_head = 4
-        d_head = d_model // n_head
-    elif d_model > 16:
+        d_head = n_model // n_head
+    elif n_model > 16:
         n_head = 2
-        d_head = d_model // n_head
+        d_head = n_model // n_head
     else:
         n_head = 1
-        d_head = d_model
+        d_head = n_model
     return n_head, d_head
 
 
@@ -131,7 +131,7 @@ if __name__ == "__main__":
         "-l", "--n_layers", nargs="+", help="n_layers to test", required=True
     )
     parser.add_argument(
-        "-d", "--d_models", nargs="+", help="d_models to test", required=True
+        "-d", "--n_models", nargs="+", help="n_models to test", required=True
     )
     parser.add_argument(
         "-b", "--batch_sizes", nargs="+", help="batch sizes to test", required=True
@@ -202,15 +202,15 @@ if __name__ == "__main__":
 
     cutoffs, tie_projs = [], [False]
 
-    for n_layer, d_model, batch_size in product(
-            args.n_layers, args.d_models, args.batch_sizes
+    for n_layer, n_model, batch_size in product(
+            args.n_layers, args.n_models, args.batch_sizes
     ):
 
-        n_layer, d_model, batch_size = int(n_layer), int(d_model), int(
+        n_layer, n_model, batch_size = int(n_layer), int(n_model), int(
             batch_size)
         if args.reload:
-            if results.get(str((n_layer, d_model, batch_size))) is not None:
-                print(f"{(n_layer, d_model, batch_size)} already in results")
+            if results.get(str((n_layer, n_model, batch_size))) is not None:
+                print(f"{(n_layer, n_model, batch_size)} already in results")
                 continue
 
         corpus = get_time_series(default_args.data, default_args.dataset)
@@ -220,23 +220,23 @@ if __name__ == "__main__":
         if args.tracking:
             from experiment_impact_tracker.compute_tracker import ImpactTracker
 
-            tracker = ImpactTracker(f"impact/{n_layer}_{d_model}_{batch_size}")
+            tracker = ImpactTracker(f"impact/{n_layer}_{n_model}_{batch_size}")
             tracker.launch_impact_monitor()
 
-        n_head, d_head = head_repartition_rule(d_model)
-        d_inner = d_model
+        n_head, d_head = head_repartition_rule(n_model)
+        d_inner = n_model
 
         model = MemTransformerLM(
             nseries,
             n_layer,
             n_head,
-            d_model,
+            n_model,
             d_head,
             d_inner,
             default_args.dropout,
             default_args.dropatt,
             tie_weight=default_args.tied,
-            d_embed=d_model,
+            d_embed=n_model,
             div_val=default_args.div_val,
             tie_projs=tie_projs,
             pre_lnorm=default_args.pre_lnorm,
@@ -280,12 +280,12 @@ if __name__ == "__main__":
             total_time = time.time() - start_time
             print("-" * 130)
             print(
-                f"n_layer {n_layer} d_model {d_model} batch_size {batch_size} fp16 {args.fp16}: "
+                f"n_layer {n_layer} n_model {n_model} batch_size {batch_size} fp16 {args.fp16}: "
                 + "{:.4e} FLOs in {:.4e}s for ".format(compute, run_time)
                 + f"{processed_tokens} tokens, "
                 f"total time {total_time}"
             )
-            results[str((n_layer, d_model, batch_size))] = (
+            results[str((n_layer, n_model, batch_size))] = (
                 compute,
                 run_time,
                 processed_tokens,
@@ -296,10 +296,10 @@ if __name__ == "__main__":
             print("-" * 100)
             total_time = time.time() - start_time
             print(
-                f"n_layer {n_layer} d_model {d_model} batch_size {batch_size} fp16 {args.fp16}: OOM error, "
+                f"n_layer {n_layer} n_model {n_model} batch_size {batch_size} fp16 {args.fp16}: OOM error, "
                 f"total time {total_time}"
             )
-            results[str((n_layer, d_model, batch_size))] = None
+            results[str((n_layer, n_model, batch_size))] = None
 
         finally:
             # Handle CUDA OOM Error Safely

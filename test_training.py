@@ -9,7 +9,7 @@ arguments = parser.parse_args(
     "--datadir ./data/etf \
      --dataset allData.pickle \
      --n_layer 2 \
-     --d_model 128 \
+     --n_model 128 \
      --n_head 8 \
      --d_head 16 \
      --d_inner 17 \
@@ -22,7 +22,7 @@ arguments = parser.parse_args(
      --tgt_len 64 \
      --mem_len 16 \
      --eval_tgt_len 32 \
-     --d_batch 8 ".split()
+     --n_batch 8 ".split()
 )
 
 #%%

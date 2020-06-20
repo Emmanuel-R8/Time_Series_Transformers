@@ -4,7 +4,7 @@ python train.py \
     --data ../data/wikitext-103/ \
     --dataset enwik103 \
     --n_layer 2 \
-    --d_model 64 \
+    --n_model 64 \
     --n_head 4 \
     --d_head 16 \
     --d_inner 64 \

@@ -557,7 +557,7 @@ def train_ts(args):
     args.tied = not args.not_tied
 
     if args.d_embed < 0:
-        args.d_embed = args.d_model
+        args.d_embed = args.n_model
 
     # Validate `--fp16` option
     if args.fp16:
@@ -593,7 +593,7 @@ def train_ts(args):
     ############################################################################
 
     assert args.ext_len >= 0, "extended context length must be non-negative"
-    assert args.d_batch % args.batch_chunk == 0
+    assert args.n_batch % args.batch_chunk == 0
 
     args.work_dir = "{}-{}".format(args.work_dir, args.dataset)
     args.work_dir = os.path.join(args.work_dir, time.strftime("%Y%m%d-%H%M%S"))
@@ -612,7 +612,7 @@ def train_ts(args):
 
     eval_batch_size = 20
     tr_iter = time_series.get_iterator(
-        "train", args.d_batch, args.tgt_len, device=device,
+        "train", args.n_batch, args.tgt_len, device=device,
         ext_len=args.ext_len,
     )
     va_iter = time_series.get_iterator(
@@ -664,7 +664,7 @@ def train_ts(args):
             nseries,
             args.n_layer,
             args.n_head,
-            args.d_model,
+            args.n_model,
             args.d_head,
             args.d_inner,
             args.dropout,

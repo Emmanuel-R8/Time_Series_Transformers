@@ -703,7 +703,7 @@ class AdaptiveEmbedding(LightningModule):
         return embed
 
 
-class MemTransformerLM(LightningModule):
+class TransformerXL(LightningModule):
     def __init__(
             self,
             n_token: int,
@@ -727,7 +727,7 @@ class MemTransformerLM(LightningModule):
             same_length: object = False,
             clamp_len: object = -1,
     ) -> object:
-        super(MemTransformerLM, self).__init__()
+        super(TransformerXL, self).__init__()
         self.n_token = n_token
 
         d_embed = n_model if d_embed is None else d_embed
@@ -823,9 +823,8 @@ class MemTransformerLM(LightningModule):
             return None
 
         # mems is not None
-        assert len(hids) == len(
-            mems
-        ), "len(hids) != len(mems) ({len(hids)} != {len(mems)})"
+        assert len(hids) == len(mems), \
+            "len(hids) != len(mems) ({len(hids)} != {len(mems)})"
 
         # There are `mlen + qlen` steps that can be cached into mems
         # For the next step, the last `ext_len` of the `qlen` tokens
@@ -965,7 +964,7 @@ if __name__ == "__main__":
 
     for div_val in [1, 2]:
         for d_embed in [200, 100]:
-            model = MemTransformerLM(
+            model = TransformerXL(
                 args.n_token,
                 args.n_layer,
                 args.n_head,
