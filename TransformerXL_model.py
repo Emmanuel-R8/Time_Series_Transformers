@@ -15,9 +15,12 @@ class PositionalEmbedding(LightningModule):
     def __init__(self, d_emb):
         super(PositionalEmbedding, self).__init__()
 
-        assert d_emb % 2 == 0, "The embedding size n_model must be an even number"
+        assert (
+                d_emb % 2 == 0
+        ), "The size of the positional  d_emb must be an even number"
+
         self.d_emb = d_emb
-        self.n_emb = math.ceil(d_emb / 2)
+        # TODO: check if useful: self.n_emb = math.ceil(d_emb / 2)
 
         # Instead of writing sin(x / f), we use sin(x * inv_freq)
         # Frequencies range from 1 to 10000**2, sort of exponential progression
@@ -636,16 +639,14 @@ class RelPartialLearnableDecoderLayer(LightningModule):
 
 class AdaptiveEmbedding(LightningModule):
     def __init__(
-            self, n_token, d_embed, d_proj, cutoffs, div_val=1,
-            sample_softmax=False
+            self, d_model, d_embed, d_proj, cutoffs, sample_softmax=False
     ):
         super(AdaptiveEmbedding, self).__init__()
 
-        self.n_token = n_token
+        self.d_model = d_model
         self.d_embed = d_embed
 
-        self.cutoffs = cutoffs + [n_token]
-        self.div_val = div_val
+        self.cutoffs = cutoffs + [d_model]
         self.d_proj = d_proj
 
         self.emb_scale = d_proj ** 0.5
@@ -654,50 +655,16 @@ class AdaptiveEmbedding(LightningModule):
 
         self.emb_layers = nn.ModuleList()
         self.emb_projs = nn.ParameterList()
-        if div_val == 1:
-            self.emb_layers.append(
-                nn.Embedding(n_token, d_embed, sparse=(sample_softmax > 0))
-            )
-            if d_proj != d_embed:
-                self.emb_projs.append(
-                    nn.Parameter(torch.Tensor(d_proj, d_embed)))
-        else:
-            for i in range(len(self.cutoffs)):
-                l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
-                d_emb_i = d_embed // (div_val ** i)
-                self.emb_layers.append(nn.Embedding(r_idx - l_idx, d_emb_i))
-                self.emb_projs.append(
-                    nn.Parameter(torch.Tensor(d_proj, d_emb_i)))
+        self.emb_layers.append(
+            nn.Embedding(d_model, d_embed, sparse=(sample_softmax > 0))
+        )
+        if d_proj != d_embed:
+            self.emb_projs.append(nn.Parameter(torch.Tensor(d_proj, d_embed)))
 
     def forward(self, inp):
-        if self.div_val == 1:
-            embed = self.emb_layers[0](inp)
-            if self.d_proj != self.d_embed:
-                embed = F.linear(embed, self.emb_projs[0])
-        else:
-            param = next(self.parameters())
-            inp_flat = inp.view(-1)
-            emb_flat = torch.zeros(
-                [inp_flat.size(0), self.d_proj], dtype=param.dtype,
-                device=param.device,
-            )
-            for i in range(len(self.cutoffs)):
-                l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
-
-                mask_i = (inp_flat >= l_idx) & (inp_flat < r_idx)
-                indices_i = mask_i.nonzero().squeeze()
-
-                if indices_i.numel() == 0:
-                    continue
-
-                inp_i = inp_flat.index_select(0, indices_i) - l_idx
-                emb_i = self.emb_layers[i](inp_i)
-                emb_i = F.linear(emb_i, self.emb_projs[i])
-
-                emb_flat.index_copy_(0, indices_i, emb_i)
-
-            embed = emb_flat.view(*inp.size(), self.d_proj)
-
+        embed = self.emb_layers[0](inp)
+        if self.d_proj != self.d_embed:
+            embed = F.linear(embed, self.emb_projs[0])
         embed.mul_(self.emb_scale)
 
         return embed
@@ -706,7 +673,7 @@ class AdaptiveEmbedding(LightningModule):
 class TransformerXL(LightningModule):
     def __init__(
             self,
-            n_token: int,
+            d_model: int,
             n_layer: int,
             n_head: int,
             n_model: int,
@@ -714,10 +681,7 @@ class TransformerXL(LightningModule):
             d_inner: int,
             dropout: object,
             dropatt: object,
-            tie_weight: object = False,
             d_embed: object = None,
-            div_val: object = 1,
-            tie_projs: object = [False],
             pre_lnorm: bool = False,
             tgt_len: object = None,
             ext_len: object = None,
@@ -727,17 +691,17 @@ class TransformerXL(LightningModule):
             same_length: object = False,
             clamp_len: object = -1,
     ) -> object:
-        super(TransformerXL, self).__init__()
-        self.n_token = n_token
 
-        d_embed = n_model if d_embed is None else d_embed
-        self.d_embed = d_embed
+        super(TransformerXL, self).__init__()
+        self.d_model = d_model
+
+        self.d_embed = n_model if d_embed is None else d_embed
         self.n_model = n_model
         self.n_head = n_head
         self.d_head = d_head
 
         self.word_emb = AdaptiveEmbedding(
-            n_token, d_embed, n_model, cutoffs, div_val=div_val
+            d_model, d_embed, n_model, cutoffs
         )
 
         self.drop = nn.Dropout(dropout)
@@ -767,20 +731,8 @@ class TransformerXL(LightningModule):
             )
 
         self.crit = ProjectedAdaptiveSigmoid(
-            n_token, d_embed, n_model, cutoffs, div_val=div_val
+            d_model, d_embed, n_model, cutoffs
         )
-
-        if tie_weight:
-            for i in range(len(self.crit.out_layers)):
-                self.crit.out_layers[i].weight = self.word_emb.emb_layers[
-                    i].weight
-
-        if tie_projs:
-            for i, tie_proj in enumerate(tie_projs):
-                if tie_proj and div_val == 1 and n_model != d_embed:
-                    self.crit.out_projs[i] = self.word_emb.emb_projs[0]
-                elif tie_proj and div_val != 1:
-                    self.crit.out_projs[i] = self.word_emb.emb_projs[i]
 
         self.same_length = same_length
         self.clamp_len = clamp_len
@@ -823,8 +775,9 @@ class TransformerXL(LightningModule):
             return None
 
         # mems is not None
-        assert len(hids) == len(mems), \
-            "len(hids) != len(mems) ({len(hids)} != {len(mems)})"
+        assert len(hids) == len(
+            mems
+        ), "len(hids) != len(mems) ({len(hids)} != {len(mems)})"
 
         # There are `mlen + qlen` steps that can be cached into mems
         # For the next step, the last `ext_len` of the `qlen` tokens
@@ -952,42 +905,36 @@ if __name__ == "__main__":
     B = 4
     tgt_len, mem_len, ext_len = 36, 36, 0
     data_len = tgt_len * 20
-    args.n_token = 10000
+    args.d_model = 10000
 
-    data = torch.LongTensor(data_len * B).random_(0, args.n_token).to(device)
-    diter = data_utils.OrderedIterator(
-        data, B, tgt_len, device=device, ext_len=ext_len
-    )
+    data = torch.LongTensor(data_len * B).random_(0, args.d_model).to(device)
+    diter = data_utils.OrderedIterator(data, B, tgt_len, device=device,
+                                       ext_len=ext_len)
 
-    cutoffs = [args.n_token // 2]
-    tie_projs = [False] + [True] * len(cutoffs)
+    cutoffs = [args.d_model]
 
-    for div_val in [1, 2]:
-        for d_embed in [200, 100]:
-            model = TransformerXL(
-                args.n_token,
-                args.n_layer,
-                args.n_head,
-                args.n_model,
-                args.d_head,
-                args.d_inner,
-                args.dropout,
-                dropatt=args.dropout,
-                tie_weight=True,
-                d_embed=d_embed,
-                div_val=div_val,
-                tie_projs=tie_projs,
-                pre_lnorm=True,
-                tgt_len=tgt_len,
-                ext_len=ext_len,
-                mem_len=mem_len,
-                cutoffs=cutoffs,
-            ).to(device)
+    for d_embed in [200, 100]:
+        model = TransformerXL(
+            args.d_model,
+            args.n_layer,
+            args.n_head,
+            args.n_model,
+            args.d_head,
+            args.d_inner,
+            args.dropout,
+            dropatt=args.dropout,
+            d_embed=d_embed,
+            pre_lnorm=True,
+            tgt_len=tgt_len,
+            ext_len=ext_len,
+            mem_len=mem_len,
+            cutoffs=cutoffs,
+        ).to(device)
 
-            print(sum(p.numel() for p in model.parameters()))
+        print(sum(p.numel() for p in model.parameters()))
 
-            mems = tuple()
-            for idx, (inp, tgt, seqlen) in enumerate(diter):
-                print("batch {}".format(idx))
-                out = model(inp, tgt, *mems)
-                mems = out[1:]
+        mems = tuple()
+        for idx, (inp, tgt, seqlen) in enumerate(diter):
+            print("batch {}".format(idx))
+            out = model(inp, tgt, *mems)
+            mems = out[1:]

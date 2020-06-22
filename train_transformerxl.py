@@ -24,7 +24,7 @@ import pytorch_lightning as pl
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-from TransformerXL_model import MemTransformerLM
+from TransformerXL_model import TransformerXL
 
 from utils.exp_utils import create_exp_dir, logging
 from utils.data_parallel import BalancedDataParallel
@@ -115,8 +115,8 @@ class Train_TransformerXL(pl.LightningModule):
 
         self.globalState = globalState
 
-        self.model = MemTransformerLM(
-            n_token=globalState["n_token"],
+        self.model = TransformerXL(
+            d_model=globalState["d_model"],
             n_layer=globalState["n_layer"],
             n_head=globalState["n_head"],
             n_model=globalState["n_model"],
@@ -124,10 +124,7 @@ class Train_TransformerXL(pl.LightningModule):
             d_inner=globalState["d_inner"],
             dropout=globalState["dropout"],
             dropatt=globalState["dropatt"],
-            tie_weight=globalState["tie_weight"],
             d_embed=globalState["d_embed"],
-            div_val=globalState["div_val"],
-            tie_projs=globalState["tie_projs"],
             pre_lnorm=globalState["pre_lnorm"],
             tgt_len=globalState["tgt_len"],
             ext_len=globalState["ext_len"],
@@ -135,7 +132,7 @@ class Train_TransformerXL(pl.LightningModule):
             cutoffs=globalState["cutoffs"],
             adapt_inp=globalState["adapt_inp"],
             same_length=globalState["same_length"],
-            clamp_len=globalState["clam_len"],
+            clamp_len=globalState["clamp_len"],
         )
         self.criteria = nn.CrossEntropyLoss()
 

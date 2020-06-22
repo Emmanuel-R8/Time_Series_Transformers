@@ -11,9 +11,9 @@ import torch.nn as nn
 from apex import amp
 
 from data_utils import get_time_series
-from mem_transformer import MemTransformerLM
+from old.mem_transformer import MemTransformerLM
 from utils.initialization import weights_init
-from train_ts import parallelize_model, build_optimizer, build_scheduler
+from old.train_ts import parallelize_model, build_optimizer, build_scheduler
 from utils.torch_utils import non_emb_param_count, openai_compute
 
 

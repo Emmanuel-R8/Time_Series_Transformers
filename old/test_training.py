@@ -1,5 +1,5 @@
 #%%
-import train_ts
+from old import train_ts
 
 from utils.argparsing import parser
 

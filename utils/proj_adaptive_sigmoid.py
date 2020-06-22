@@ -14,8 +14,7 @@ if torch.cuda.is_available():
 
 
 class ProjectedAdaptiveSigmoid(LightningModule):
-    def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1,
-                 keep_order=False):
+    def __init__(self, n_token, d_embed, d_proj, cutoffs, keep_order=False):
         super(ProjectedAdaptiveSigmoid, self).__init__()
 
         self.n_token = n_token
@@ -24,7 +23,6 @@ class ProjectedAdaptiveSigmoid(LightningModule):
 
         self.cutoffs = cutoffs + [n_token]
         self.cutoff_ends = [0] + self.cutoffs
-        self.div_val = div_val
 
         self.shortlist_size = self.cutoffs[0]
         self.n_clusters = len(self.cutoffs) - 1
@@ -39,22 +37,14 @@ class ProjectedAdaptiveSigmoid(LightningModule):
         self.out_layers = nn.ModuleList()
         self.out_projs = nn.ParameterList()
 
-        if div_val == 1:
-            for i in range(len(self.cutoffs)):
-                if d_proj != d_embed:
-                    self.out_projs.append(nn.Parameter(torch.Tensor(d_proj, d_embed)))
-                else:
-                    self.out_projs.append(None)
+        for i in range(len(self.cutoffs)):
+            if d_proj != d_embed:
+                self.out_projs.append(
+                    nn.Parameter(torch.Tensor(d_proj, d_embed)))
+            else:
+                self.out_projs.append(None)
 
-            self.out_layers.append(nn.Linear(d_embed, n_token))
-        else:
-            for i in range(len(self.cutoffs)):
-                l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
-                d_emb_i = d_embed // (div_val ** i)
-
-                self.out_projs.append(nn.Parameter(torch.Tensor(d_proj, d_emb_i)))
-
-                self.out_layers.append(nn.Linear(d_emb_i, r_idx - l_idx))
+        self.out_layers.append(nn.Linear(d_embed, n_token))
 
         self.keep_order = keep_order
 
@@ -95,13 +85,9 @@ class ProjectedAdaptiveSigmoid(LightningModule):
             # construct weights and biases
             weights, biases = [], []
             for i in range(len(self.cutoffs)):
-                if self.div_val == 1:
-                    l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
-                    weight_i = self.out_layers[0].weight[l_idx:r_idx]
-                    bias_i = self.out_layers[0].bias[l_idx:r_idx]
-                else:
-                    weight_i = self.out_layers[i].weight
-                    bias_i = self.out_layers[i].bias
+                l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
+                weight_i = self.out_layers[0].weight[l_idx:r_idx]
+                bias_i = self.out_layers[0].bias[l_idx:r_idx]
 
                 if i == 0:
                     weight_i = torch.cat([weight_i, self.cluster_weight], dim=0)

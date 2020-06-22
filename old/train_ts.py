@@ -13,7 +13,7 @@ import torch.nn as nn
 import torch.optim as optim
 
 from data_utils import get_time_series
-from mem_transformer import MemTransformerLM
+from old.mem_transformer import MemTransformerLM
 
 from utils.exp_utils import create_exp_dir
 from utils.data_parallel import BalancedDataParallel

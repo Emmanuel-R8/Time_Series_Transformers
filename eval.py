@@ -3,12 +3,10 @@ import argparse
 import time
 import math
 import os
-import sys
 
 import torch
 
 from data_utils import get_time_series
-from mem_transformer import MemTransformerLM
 from utils.exp_utils import get_logger
 
 parser = argparse.ArgumentParser(
