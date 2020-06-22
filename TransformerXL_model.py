@@ -19,7 +19,7 @@ class PositionalEmbedding(LightningModule):
         self.d_emb = d_emb
         self.n_emb = math.ceil(d_emb / 2)
 
-        # Instead of writing sin(x / f) will use sin(x * inv_freq)
+        # Instead of writing sin(x / f), we use sin(x * inv_freq)
         # Frequencies range from 1 to 10000**2, sort of exponential progression
         # with exactly d_pos_emb frequencies
         inv_freq = 1 / (10000 ** (torch.arange(0.0, d_emb, 2.0) / d_emb))
