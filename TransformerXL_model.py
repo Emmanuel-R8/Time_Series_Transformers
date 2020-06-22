@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from pytorch_lightning.core.lightning import LightningModule
 
-from utils.proj_adaptive_sigmoid import ProjectedAdaptiveSigmoid
+from utils.proj_sigmoid import ProjectedSigmoid
 
 import data_utils
 
@@ -639,19 +639,16 @@ class RelPartialLearnableDecoderLayer(LightningModule):
 
 class AdaptiveEmbedding(LightningModule):
     def __init__(
-            self, d_model, d_embed, d_proj, cutoffs, sample_softmax=False
+            self, d_model, d_embed, d_proj, sample_softmax=False
     ):
         super(AdaptiveEmbedding, self).__init__()
 
         self.d_model = d_model
         self.d_embed = d_embed
 
-        self.cutoffs = cutoffs + [d_model]
         self.d_proj = d_proj
 
         self.emb_scale = d_proj ** 0.5
-
-        self.cutoff_ends = [0] + self.cutoffs
 
         self.emb_layers = nn.ModuleList()
         self.emb_projs = nn.ParameterList()
@@ -686,7 +683,6 @@ class TransformerXL(LightningModule):
             tgt_len: object = None,
             ext_len: object = None,
             mem_len: object = None,
-            cutoffs: object = [],
             adapt_inp: object = False,
             same_length: object = False,
             clamp_len: object = -1,
@@ -701,7 +697,7 @@ class TransformerXL(LightningModule):
         self.d_head = d_head
 
         self.word_emb = AdaptiveEmbedding(
-            d_model, d_embed, n_model, cutoffs
+            d_model, d_embed, n_model
         )
 
         self.drop = nn.Dropout(dropout)
@@ -730,9 +726,8 @@ class TransformerXL(LightningModule):
                 )
             )
 
-        self.crit = ProjectedAdaptiveSigmoid(
-            d_model, d_embed, n_model, cutoffs
-        )
+        self.crit = ProjectedSigmoid(
+            d_model, d_embed, n_model)
 
         self.same_length = same_length
         self.clamp_len = clamp_len
@@ -911,8 +906,6 @@ if __name__ == "__main__":
     diter = data_utils.OrderedIterator(data, B, tgt_len, device=device,
                                        ext_len=ext_len)
 
-    cutoffs = [args.d_model]
-
     for d_embed in [200, 100]:
         model = TransformerXL(
             args.d_model,
@@ -928,7 +921,6 @@ if __name__ == "__main__":
             tgt_len=tgt_len,
             ext_len=ext_len,
             mem_len=mem_len,
-            cutoffs=cutoffs,
         ).to(device)
 
         print(sum(p.numel() for p in model.parameters()))

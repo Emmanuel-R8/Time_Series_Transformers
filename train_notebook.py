@@ -12,8 +12,7 @@ data_set.fillna(0, inplace=True)
 globalState = {
     "datadir"           : "./data/etf",
     "d_model"           : data_set.shape[1],
-    # depth of the model = no. of series = n_token
-    "cutoffs"           : [data_set.shape[1]],
+    # depth of the model = no. of series = n_series
     "adapt_inp"         : False,
     "n_layer"           : 12,
     "n_head"            : 10,

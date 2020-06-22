@@ -5,9 +5,9 @@ import torch.nn.functional as F
 import pytorch_lightning as lt
 
 
-class AdaptiveLogSigmoid(lt.LightningModule):
-    def __init__(self, in_features, n_classes, cutoffs, keep_order=False):
-        super(AdaptiveLogSigmoid, self).__init__()
+class LogSigmoid(lt.LightningModule):
+    def __init__(self, in_features, n_classes, keep_order=False):
+        super(LogSigmoid, self).__init__()
 
         cutoffs = list(cutoffs)
 
@@ -16,7 +16,7 @@ class AdaptiveLogSigmoid(lt.LightningModule):
                 or min(cutoffs) <= 0
                 or max(cutoffs) >= (n_classes - 1)
                 or len(set(cutoffs)) != len(cutoffs)
-            or any([int(c) != c for c in cutoffs])
+                or any([int(c) != c for c in cutoffs])
         ):
 
             raise ValueError(

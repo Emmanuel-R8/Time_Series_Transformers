@@ -6,8 +6,6 @@ from collections import Counter, OrderedDict
 import numpy as np
 import torch
 
-from utils.vocabulary import Vocab
-
 
 class OrderedIterator():
     def __init__(self, data: torch.LongTensor, d_batch: int = 10,
@@ -69,38 +67,6 @@ class OrderedIterator():
 
     def __iter__(self):
         return self.get_fixlen_iter()
-
-
-class TimeSeries():
-    def __init__(self, path, dataset, *args, **kwargs):
-        self.dataset = dataset
-        self.vocab = Vocab(*args, **kwargs)
-
-        self.vocab.count_file(os.path.join(path, "train.txt"))
-        self.vocab.count_file(os.path.join(path, "valid.txt"))
-        self.vocab.count_file(os.path.join(path, "test.txt"))
-
-        self.vocab.build_vocab()
-
-        self.train = self.vocab.encode_file(
-            os.path.join(path, "train.txt"), ordered=True, add_eos=False
-        )
-        self.valid = self.vocab.encode_file(
-            os.path.join(path, "valid.txt"), ordered=True, add_eos=False
-        )
-        self.test = self.vocab.encode_file(
-            os.path.join(path, "test.txt"), ordered=True, add_eos=False
-        )
-
-    def get_iterator(self, split, *args, **kwargs):
-        if split == "train":
-            data_iter = OrderedIterator(self.train, *args, **kwargs)
-
-        elif split in ["valid", "test"]:
-            data = self.valid if split == "valid" else self.test
-            data_iter = OrderedIterator(data, *args, **kwargs)
-
-        return data_iter
 
 
 def get_time_series(datadir, dataset):

@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from pytorch_lightning.core.lightning import LightningModule
 
-from utils.proj_adaptive_sigmoid import ProjectedAdaptiveSigmoid
+from utils.proj_sigmoid import ProjectedSigmoid
 
 import data_utils
 
@@ -766,7 +766,7 @@ class MemTransformerLM(LightningModule):
                 )
             )
 
-        self.crit = ProjectedAdaptiveSigmoid(
+        self.crit = ProjectedSigmoid(
             n_token, d_embed, n_model, cutoffs, div_val=div_val
         )
 

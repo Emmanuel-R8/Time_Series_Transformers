@@ -16,7 +16,7 @@ from data_utils import get_time_series
 from old.mem_transformer import MemTransformerLM
 
 from utils.exp_utils import create_exp_dir
-from utils.data_parallel import BalancedDataParallel
+from old.utils.data_parallel import BalancedDataParallel
 from utils.initialization import weights_init
 from utils.argparsing import parser
 from utils.torch_utils import non_emb_param_count, openai_compute
@@ -608,7 +608,7 @@ def train_ts(args):
     ############################################################################
     time_series = get_time_series(args.datadir, args.dataset)
     nseries = len(time_series.vocab)
-    args.n_token = nseries
+    args.n_series = nseries
 
     eval_batch_size = 20
     tr_iter = time_series.get_iterator(

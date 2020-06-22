@@ -27,7 +27,6 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 from TransformerXL_model import TransformerXL
 
 from utils.exp_utils import create_exp_dir, logging
-from utils.data_parallel import BalancedDataParallel
 from utils.initialization import weights_init
 
 from utils.argparsing import parser
@@ -129,7 +128,6 @@ class Train_TransformerXL(pl.LightningModule):
             tgt_len=globalState["tgt_len"],
             ext_len=globalState["ext_len"],
             mem_len=globalState["mem_len"],
-            cutoffs=globalState["cutoffs"],
             adapt_inp=globalState["adapt_inp"],
             same_length=globalState["same_length"],
             clamp_len=globalState["clamp_len"],
