@@ -19,8 +19,8 @@ arguments = parser.parse_args(
      --lr 0.00025 \
      --warmup_step 0 \
      --max_step 10000 \
-     --tgt_len 64 \
-     --mem_len 16 \
+     --n_predict 64 \
+     --n_mems 16 \
      --eval_tgt_len 32 \
      --n_batch 8 ".split()
 )

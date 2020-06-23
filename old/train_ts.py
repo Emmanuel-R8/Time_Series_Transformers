@@ -114,16 +114,16 @@ def train_ts(args):
         model.eval()
 
         # debug
-        # If the model does not use memory at all, make the ext_len longer.
-        # Otherwise, make the mem_len longer and keep the ext_len the same.
-        # if default_args.mem_len == 0:
+        # If the model does not use memory at all, make the n_ext_ctx longer.
+        # Otherwise, make the n_mems longer and keep the n_ext_ctx the same.
+        # if default_args.n_mems == 0:
         #     model.reset_length(default_args.eval_tgt_len,
-        #                        default_args.ext_len + default_args.tgt_len -
-        #                        default_args.eval_tgt_len, default_args.mem_len)
+        #                        default_args.n_ext_ctx + default_args.n_predict -
+        #                        default_args.eval_tgt_len, default_args.n_mems)
         # else:
         #     model.reset_length(default_args.eval_tgt_len,
-        #                        default_args.ext_len, default_args.mem_len +
-        #                       default_args.tgt_len - default_args.eval_tgt_len)
+        #                        default_args.n_ext_ctx, default_args.n_mems +
+        #                       default_args.n_predict - default_args.eval_tgt_len)
 
         # Evaluation
         total_len, total_loss = 0, 0.0
@@ -139,8 +139,8 @@ def train_ts(args):
                 total_len += seq_len
 
         # Switch back to the training mode
-        # model.reset_length(default_args.tgt_len, default_args.ext_len,
-        # default_args.mem_len)
+        # model.reset_length(default_args.n_predict, default_args.n_ext_ctx,
+        # default_args.n_mems)
         model.train()
 
         return total_loss / total_len
@@ -556,8 +556,8 @@ def train_ts(args):
     #
     args.tied = not args.not_tied
 
-    if args.d_embed < 0:
-        args.d_embed = args.n_model
+    if args.d_pos_embed < 0:
+        args.d_pos_embed = args.n_model
 
     # Validate `--fp16` option
     if args.fp16:
@@ -592,7 +592,7 @@ def train_ts(args):
     # Logging
     ############################################################################
 
-    assert args.ext_len >= 0, "extended context length must be non-negative"
+    assert args.n_ext_ctx >= 0, "extended context length must be non-negative"
     assert args.n_batch % args.batch_chunk == 0
 
     args.work_dir = "{}-{}".format(args.work_dir, args.dataset)
@@ -612,19 +612,19 @@ def train_ts(args):
 
     eval_batch_size = 20
     tr_iter = time_series.get_iterator(
-        "train", args.n_batch, args.tgt_len, device=device,
-        ext_len=args.ext_len,
+        "train", args.n_batch, args.n_predict, device=device,
+        ext_len=args.n_ext_ctx,
     )
     va_iter = time_series.get_iterator(
         "valid",
         eval_batch_size,
         args.eval_tgt_len,
         device=device,
-        ext_len=args.ext_len,
+        ext_len=args.n_ext_ctx,
     )
     te_iter = time_series.get_iterator(
         "test", eval_batch_size, args.eval_tgt_len, device=device,
-        ext_len=args.ext_len,
+        ext_len=args.n_ext_ctx,
     )
 
     cutoffs, tie_projs = [], [False]
@@ -670,16 +670,16 @@ def train_ts(args):
             args.dropout,
             args.dropatt,
             tie_weight=args.tied,
-            d_embed=args.d_embed,
+            d_embed=args.d_pos_embed,
             div_val=args.div_val,
             tie_projs=tie_projs,
             pre_lnorm=args.pre_lnorm,
-            tgt_len=args.tgt_len,
-            ext_len=args.ext_len,
-            mem_len=args.mem_len,
+            tgt_len=args.n_predict,
+            ext_len=args.n_ext_ctx,
+            mem_len=args.n_mems,
             cutoffs=cutoffs,
             same_length=args.same_length,
-            clamp_len=args.clamp_len,
+            clamp_len=args.n_clamp_after,
         )
         model.apply(initialization_func)
 

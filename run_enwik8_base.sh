@@ -18,7 +18,7 @@ if [[ $1 == 'train' ]]; then
         --warmup_step 0 \
         --max_step 10000 \
         --tgt_len 64 \
-        --mem_len 64 \
+        --n_mems 64 \
         --eval_tgt_len 64 \
         --batch_size 22 \
 #        --multi_gpu \
@@ -31,8 +31,8 @@ elif [[ $1 == 'eval' ]]; then
         --data ./data/enwik8/ \
         --dataset enwik8 \
         --tgt_len 80 \
-        --mem_len 2100 \
-        --clamp_len 820 \
+        --n_mems 2100 \
+        --n_clamp_after 820 \
         --same_length \
         --split test \
         ${@:2}

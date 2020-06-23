@@ -20,7 +20,7 @@ parser.add_argument("--n_layer", type=int, default=12,
                     help="number of total layers")
 parser.add_argument("--n_head", type=int, default=10, help="number of heads")
 parser.add_argument("--d_head", type=int, default=50, help="head dimension")
-parser.add_argument("--d_embed", type=int, default=-1,
+parser.add_argument("--d_pos_embed", type=int, default=-1,
                     help="embedding dimension")
 parser.add_argument(
     "--n_model", type=int, default=500, help="model dimension. Must be even."
@@ -150,19 +150,19 @@ parser.add_argument(
 parser.add_argument("--patience", type=int, default=0, help="patience")
 
 parser.add_argument(
-    "--tgt_len", type=int, default=70, help="number of tokens to predict"
+    "--n_predict", type=int, default=70, help="number of tokens to predict"
 )
 parser.add_argument(
-    "--eval_tgt_len",
+    "--eval_n_predict",
     type=int,
     default=50,
     help="number of tokens to predict for evaluation",
 )
 parser.add_argument(
-    "--ext_len", type=int, default=0, help="length of the extended context"
+    "--n_ext_ctx", type=int, default=0, help="length of the extended context"
 )
 parser.add_argument(
-    "--mem_len", type=int, default=0,
+    "--n_mems", type=int, default=0,
     help="length of the retained previous heads"
 )
 parser.add_argument("--varlen", action="store_false",
@@ -172,10 +172,10 @@ parser.add_argument(
     help="use the same attn length for all tokens"
 )
 parser.add_argument(
-    "--clamp_len",
+    "--n_clamp_after",
     type=int,
     default=-1,
-    help="use the same pos embeddings after clamp_len",
+    help="use the same pos embeddings after n_clamp_after",
 )
 
 parser.add_argument("--seed", type=int, default=1111, help="random seed")

@@ -12,17 +12,21 @@ import data_utils
 
 
 class PositionalEmbedding(LightningModule):
-    def __init__(self, d_emb):
+    def __init__(self, d_pos_embed):
         super(PositionalEmbedding, self).__init__()
 
-        assert d_emb % 2 == 0, "The embedding size n_model must be an even number"
-        self.d_emb = d_emb
-        self.n_emb = math.ceil(d_emb / 2)
+        assert (
+                d_pos_embed % 2 == 0
+        ), "The size of the positional  d_pos_embed must be an even number"
 
-        # Instead of writing sin(x / f) will use sin(x * inv_freq)
+        self.d_pos_embed = d_pos_embed
+        # TODO: check if useful: self.n_emb = math.ceil(d_pos_embed / 2)
+
+        # Instead of writing sin(x / f), we use sin(x * inv_freq)
         # Frequencies range from 1 to 10000**2, sort of exponential progression
         # with exactly d_pos_emb frequencies
-        inv_freq = 1 / (10000 ** (torch.arange(0.0, d_emb, 2.0) / d_emb))
+        inv_freq = 1 / (10000 ** (
+                torch.arange(0.0, d_pos_embed, 2.0) / d_pos_embed))
         # inv_freq = inv_freq.rename('InvFreq') unsupported by torch.ger
 
         # Register this variable as a constant
@@ -206,9 +210,9 @@ class RelMultiHeadAttn(LightningModule):
             d_head,
             dropout,
             dropatt=0,
-            tgt_len=None,
-            ext_len=None,
-            mem_len=None,
+            n_predict=1,
+            n_ext_ctx=None,
+            n_mems=None,
             pre_lnorm=False,
     ):
         super(RelMultiHeadAttn, self).__init__()
@@ -636,118 +640,82 @@ class RelPartialLearnableDecoderLayer(LightningModule):
 
 class AdaptiveEmbedding(LightningModule):
     def __init__(
-            self, n_token, d_embed, d_proj, cutoffs, div_val=1,
-            sample_softmax=False
+            self, d_model, d_pos_embed, d_proj, sample_softmax=False
     ):
         super(AdaptiveEmbedding, self).__init__()
 
-        self.n_token = n_token
-        self.d_embed = d_embed
+        self.d_model = d_model
+        self.d_pos_embed = d_pos_embed
 
-        self.cutoffs = cutoffs + [n_token]
-        self.div_val = div_val
         self.d_proj = d_proj
 
         self.emb_scale = d_proj ** 0.5
 
-        self.cutoff_ends = [0] + self.cutoffs
-
         self.emb_layers = nn.ModuleList()
         self.emb_projs = nn.ParameterList()
-        if div_val == 1:
-            self.emb_layers.append(
-                nn.Embedding(n_token, d_embed, sparse=(sample_softmax > 0))
-            )
-            if d_proj != d_embed:
-                self.emb_projs.append(
-                    nn.Parameter(torch.Tensor(d_proj, d_embed)))
-        else:
-            for i in range(len(self.cutoffs)):
-                l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
-                d_emb_i = d_embed // (div_val ** i)
-                self.emb_layers.append(nn.Embedding(r_idx - l_idx, d_emb_i))
-                self.emb_projs.append(
-                    nn.Parameter(torch.Tensor(d_proj, d_emb_i)))
+        self.emb_layers.append(
+            nn.Embedding(d_model, d_pos_embed, sparse=(sample_softmax > 0))
+        )
+        if d_proj != d_pos_embed:
+            self.emb_projs.append(
+                nn.Parameter(torch.Tensor(d_proj, d_pos_embed)))
 
     def forward(self, inp):
-        if self.div_val == 1:
-            embed = self.emb_layers[0](inp)
-            if self.d_proj != self.d_embed:
-                embed = F.linear(embed, self.emb_projs[0])
-        else:
-            param = next(self.parameters())
-            inp_flat = inp.view(-1)
-            emb_flat = torch.zeros(
-                [inp_flat.size(0), self.d_proj], dtype=param.dtype,
-                device=param.device,
-            )
-            for i in range(len(self.cutoffs)):
-                l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
-
-                mask_i = (inp_flat >= l_idx) & (inp_flat < r_idx)
-                indices_i = mask_i.nonzero().squeeze()
-
-                if indices_i.numel() == 0:
-                    continue
-
-                inp_i = inp_flat.index_select(0, indices_i) - l_idx
-                emb_i = self.emb_layers[i](inp_i)
-                emb_i = F.linear(emb_i, self.emb_projs[i])
-
-                emb_flat.index_copy_(0, indices_i, emb_i)
-
-            embed = emb_flat.view(*inp.size(), self.d_proj)
-
+        embed = self.emb_layers[0](inp)
+        if self.d_proj != self.d_pos_embed:
+            embed = F.linear(embed, self.emb_projs[0])
         embed.mul_(self.emb_scale)
 
         return embed
 
 
-class MemTransformerLM(LightningModule):
-    def __init__(
-            self,
-            n_token: int,
-            n_layer: int,
-            n_head: int,
-            n_model: int,
-            d_head: int,
-            d_inner: int,
-            dropout: object,
-            dropatt: object,
-            tie_weight: object = False,
-            d_embed: object = None,
-            div_val: object = 1,
-            tie_projs: object = [False],
-            pre_lnorm: bool = False,
-            tgt_len: object = None,
-            ext_len: object = None,
-            mem_len: object = None,
-            cutoffs: object = [],
-            adapt_inp: object = False,
-            same_length: object = False,
-            clamp_len: object = -1,
-    ) -> object:
-        super(MemTransformerLM, self).__init__()
-        self.n_token = n_token
+class TransformerXL(LightningModule):
+    def __init__(self, d_model: int, n_model: int, n_head: int, d_head: int,
+                 d_inner: int, n_layer: int, dropout: object, dropatt: object,
+                 d_pos_embed: object = None, pre_lnorm: bool = False,
+                 n_predict: object = None, n_ext_ctx: object = None,
+                 n_mems: object = None, adapt_inp: object = False,
+                 same_length: object = False,
+                 n_clamp_after: object = -1) -> None:
+        """
 
-        d_embed = n_model if d_embed is None else d_embed
-        self.d_embed = d_embed
+        :param d_model: dimensionality of the model's hidden states'
+        :param n_model: the number of dates that the model takes (length of the model)
+        :param n_head: number of attention heads for each attention layer in the Transformer encoder
+        :param d_head: dimensionality of the model's heads
+        :param d_inner:
+        :param n_layer: number of layers
+        :param dropout:
+        :param dropatt:
+        :param d_pos_embed: dimensionality of the positional embeddings
+        :param pre_lnorm:
+        :param n_predict: number of tokens to predict
+        :param n_ext_ctx:
+        :param n_mems:
+        :param adapt_inp:
+        :param same_length:
+        :param n_clamp_after:
+        """
+        super(TransformerXL, self).__init__()
+        self.d_model = d_model
+
+        self.d_pos_embed = n_model if d_pos_embed is None else d_pos_embed
         self.n_model = n_model
         self.n_head = n_head
         self.d_head = d_head
 
         self.word_emb = AdaptiveEmbedding(
-            n_token, d_embed, n_model, cutoffs, div_val=div_val
+            d_model, d_pos_embed, n_model
         )
 
         self.drop = nn.Dropout(dropout)
 
         self.n_layer = n_layer
 
-        self.tgt_len = tgt_len
-        self.mem_len = mem_len
-        self.ext_len = ext_len
-        self.max_n_keys = tgt_len + ext_len + mem_len
+        self.n_predict = n_predict
+        self.n_mems = n_mems
+        self.n_ext_ctx = n_ext_ctx
+        self.max_n_keys = n_predict + n_ext_ctx + n_mems
 
         self.layers = nn.ModuleList()
         for i in range(n_layer):
@@ -758,32 +726,18 @@ class MemTransformerLM(LightningModule):
                     d_head,
                     d_inner,
                     dropout,
-                    tgt_len=tgt_len,
-                    ext_len=ext_len,
-                    mem_len=mem_len,
+                    n_predict=n_predict,
+                    n_ext_ctx=n_ext_ctx,
+                    n_mems=n_mems,
                     dropatt=dropatt,
                     pre_lnorm=pre_lnorm,
                 )
             )
 
-        self.crit = ProjectedSigmoid(
-            n_token, d_embed, n_model, cutoffs, div_val=div_val
-        )
-
-        if tie_weight:
-            for i in range(len(self.crit.out_layers)):
-                self.crit.out_layers[i].weight = self.word_emb.emb_layers[
-                    i].weight
-
-        if tie_projs:
-            for i, tie_proj in enumerate(tie_projs):
-                if tie_proj and div_val == 1 and n_model != d_embed:
-                    self.crit.out_projs[i] = self.word_emb.emb_projs[0]
-                elif tie_proj and div_val != 1:
-                    self.crit.out_projs[i] = self.word_emb.emb_projs[i]
+        self.crit = ProjectedSigmoid(d_model, d_pos_embed, n_model)
 
         self.same_length = same_length
-        self.clamp_len = clamp_len
+        self.n_clamp_after = n_clamp_after
         self.training_steps = 0
         self.compute = 0
 
@@ -792,7 +746,7 @@ class MemTransformerLM(LightningModule):
     def _create_params(self):
         # default attention
         # DIMS: ceiling(d_pos_embed / 2)
-        self.pos_emb = PositionalEmbedding(self.n_model)
+        self.pos_emb = PositionalEmbedding(self.d_pos_embed)
 
         # DIMS: n_head x n_head
         self.r_w_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
@@ -800,13 +754,13 @@ class MemTransformerLM(LightningModule):
         # DIMS: n_head x n_head
         self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
 
-    def reset_length(self, tgt_len, ext_len, mem_len):
-        self.tgt_len = tgt_len
-        self.mem_len = mem_len
-        self.ext_len = ext_len
+    def reset_length(self, n_predict, n_ext_ctx, n_mems):
+        self.n_predict = n_predict
+        self.n_mems = n_mems
+        self.n_ext_ctx = n_ext_ctx
 
     def init_mems(self):
-        if self.mem_len > 0:
+        if self.n_mems > 0:
             mems = []
             param = next(self.parameters())
             for i in range(self.n_layer + 1):
@@ -834,8 +788,8 @@ class MemTransformerLM(LightningModule):
         # to `mlen + qlen - self.n_ext_ctx`.
         with torch.no_grad():
             new_mems = []
-            end_idx = mlen + max(0, qlen - 0 - self.ext_len)
-            beg_idx = max(0, end_idx - self.mem_len)
+            end_idx = mlen + max(0, qlen - 0 - self.n_ext_ctx)
+            beg_idx = max(0, end_idx - self.n_mems)
             for i in range(len(hids)):
                 cat = torch.cat([mems[i], hids[i]], dim=0)
                 new_mems.append(cat[beg_idx:end_idx].detach())
@@ -851,7 +805,7 @@ class MemTransformerLM(LightningModule):
         klen = mlen + qlen
         if self.same_length:
             all_ones = word_emb.new_ones(qlen, klen)
-            mask_len = klen - self.mem_len
+            mask_len = klen - self.n_mems
             if mask_len > 0:
                 mask_shift_len = qlen - mask_len
             else:
@@ -876,8 +830,8 @@ class MemTransformerLM(LightningModule):
         pos_seq = torch.arange(
             klen - 1, -1, -1.0, device=word_emb.device, dtype=word_emb.dtype
         )
-        if self.clamp_len > 0:
-            pos_seq.clamp_(max=self.clamp_len)
+        if self.n_clamp_after > 0:
+            pos_seq.clamp_(max=self.n_clamp_after)
         pos_emb = self.pos_emb(pos_seq)
 
         core_out = self.drop(word_emb)
@@ -915,13 +869,13 @@ class MemTransformerLM(LightningModule):
         if not mems:
             mems = self.init_mems()
 
-        tgt_len = target.size(0)
+        n_predict = target.size(0)
         hidden, new_mems = self._forward(data, mems=mems)
 
-        pred_hid = hidden[-tgt_len:]
+        pred_hid = hidden[-n_predict:]
         loss = self.crit(pred_hid.reshape(-1, pred_hid.size(-1)),
                          target.reshape(-1))
-        loss = loss.view(tgt_len, -1)
+        loss = loss.view(n_predict, -1)
 
         if new_mems is None:
             return [loss]
@@ -951,44 +905,26 @@ if __name__ == "__main__":
     device = torch.device("cuda" if args.cuda else "cpu")
 
     B = 4
-    tgt_len, mem_len, ext_len = 36, 36, 0
-    data_len = tgt_len * 20
-    args.n_token = 10000
+    n_predict, n_mems, n_ext_ctx = 36, 36, 0
+    data_len = n_predict * 20
+    args.d_model = 10000
 
-    data = torch.LongTensor(data_len * B).random_(0, args.n_token).to(device)
-    diter = data_utils.OrderedIterator(
-        data, B, tgt_len, device=device, n_ext_ctx=ext_len
-    )
+    data = torch.LongTensor(data_len * B).random_(0, args.d_model).to(device)
+    diter = data_utils.OrderedIterator(data, B, n_predict, device=device,
+                                       n_ext_ctx=n_ext_ctx)
 
-    cutoffs = [args.n_token // 2]
-    tie_projs = [False] + [True] * len(cutoffs)
+    for d_pos_embed in [200, 100]:
+        model = TransformerXL(args.d_model, args.n_model, args.n_head,
+                              args.d_head, args.d_inner, args.n_layer,
+                              args.dropout, dropatt=args.dropout,
+                              d_pos_embed=d_pos_embed, pre_lnorm=True,
+                              n_predict=n_predict,
+                              n_ext_ctx=n_ext_ctx, n_mems=n_mems).to(device)
 
-    for div_val in [1, 2]:
-        for d_embed in [200, 100]:
-            model = MemTransformerLM(
-                args.n_token,
-                args.n_layer,
-                args.n_head,
-                args.n_model,
-                args.d_head,
-                args.d_inner,
-                args.dropout,
-                dropatt=args.dropout,
-                tie_weight=True,
-                d_embed=d_embed,
-                div_val=div_val,
-                tie_projs=tie_projs,
-                pre_lnorm=True,
-                tgt_len=tgt_len,
-                ext_len=ext_len,
-                mem_len=mem_len,
-                cutoffs=cutoffs,
-            ).to(device)
+        print(sum(p.numel() for p in model.parameters()))
 
-            print(sum(p.numel() for p in model.parameters()))
-
-            mems = tuple()
-            for idx, (inp, tgt, seqlen) in enumerate(diter):
-                print("batch {}".format(idx))
-                out = model(inp, tgt, *mems)
-                mems = out[1:]
+        mems = tuple()
+        for idx, (inp, tgt, seqlen) in enumerate(diter):
+            print("batch {}".format(idx))
+            out = model(inp, tgt, *mems)
+            mems = out[1:]

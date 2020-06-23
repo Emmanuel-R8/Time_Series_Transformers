@@ -10,22 +10,20 @@ if torch.cuda.is_available():
 
 
 class ProjectedSigmoid(LightningModule):
-    def __init__(self, n_series, d_embed, d_proj, keep_order=False):
+    def __init__(self, n_series, d_model, d_proj, keep_order=False):
         super(ProjectedSigmoid, self).__init__()
 
         self.n_series = n_series
-        self.d_embed = d_embed
+        self.d_model = d_model
         self.d_proj = d_proj
 
         self.out_layers = nn.ModuleList()
         self.out_projs = nn.ParameterList()
 
-        if d_proj != d_embed:
-            self.out_projs.append(nn.Parameter(torch.Tensor(d_proj, d_embed)))
-        else:
-            self.out_projs.append(None)
+        if d_proj != d_model:
+            self.out_projs.append(nn.Parameter(torch.Tensor(d_proj, d_model)))
 
-        self.out_layers.append(nn.Linear(d_embed, n_series))
+        self.out_layers.append(nn.Linear(d_model, n_series))
 
     def _compute_logit(self, hidden, weight, bias, proj):
         if proj is None:

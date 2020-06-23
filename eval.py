@@ -27,19 +27,20 @@ parser.add_argument(
 )
 parser.add_argument("--n_batch", type=int, default=10, help="batch size")
 parser.add_argument(
-    "--tgt_len", type=int, default=5, help="number of tokens to predict"
+    "--n_predict", type=int, default=5, help="number of tokens to predict"
 )
 parser.add_argument(
-    "--ext_len", type=int, default=0, help="length of the extended context"
+    "--n_ext_ctx", type=int, default=0, help="length of the extended context"
 )
 parser.add_argument(
-    "--mem_len",
+    "--n_mems",
     type=int,
     default=0,
     help="length of the retained previous heads",
 )
 parser.add_argument(
-    "--clamp_len", type=int, default=-1, help="max positional embedding index"
+    "--n_clamp_after", type=int, default=-1,
+    help="max positional embedding index"
 )
 parser.add_argument("--cuda", action="store_true", help="use CUDA")
 parser.add_argument(
@@ -54,7 +55,7 @@ parser.add_argument(
     help="set same length attention with masking",
 )
 args = parser.parse_args()
-assert args.ext_len >= 0, "extended context length must be non-negative"
+assert args.n_ext_ctx >= 0, "extended context length must be non-negative"
 
 device = torch.device("cuda" if args.cuda else "cpu")
 
@@ -68,10 +69,12 @@ corpus = get_time_series(args.data, args.dataset)
 nseries = len(corpus.vocab)
 
 va_iter = corpus.get_iterator(
-    "valid", args.batch_size, args.tgt_len, device=device, ext_len=args.ext_len
+    "valid", args.batch_size, args.n_predict, device=device,
+    n_ext_ctx=args.n_ext_ctx
 )
 te_iter = corpus.get_iterator(
-    "test", args.batch_size, args.tgt_len, device=device, ext_len=args.ext_len
+    "test", args.batch_size, args.n_predict, device=device,
+    n_ext_ctx=args.n_ext_ctx
 )
 
 # Load the best saved model.
@@ -80,20 +83,21 @@ with open(os.path.join(args.work_dir, "model.pt"), "rb") as f:
 model = model.to(device)
 
 logging(
-    "Evaluating with n_batch {} tgt_len {} ext_len {} mem_len {} clamp_len {}".format(
+    "Evaluating with n_batch {} n_predict {} n_ext_ctx {} n_mems {} n_clamp_after {}".format(
         args.batch_size,
-        args.tgt_len,
-        args.ext_len,
-        args.mem_len,
-        args.clamp_len,
+        args.n_predict,
+        args.n_ext_ctx,
+        args.n_mems,
+        args.n_clamp_after,
     )
 )
 
-model.reset_length(args.tgt_len, args.ext_len, args.mem_len)
-if args.clamp_len > 0:
-    model.clamp_len = args.clamp_len
+model.reset_length(args.n_predict, args.n_ext_ctx, args.n_mems)
+if args.n_clamp_after > 0:
+    model.n_clamp_after = args.n_clamp_after
 if args.same_length:
     model.same_length = True
+
 
 ###############################################################################
 # Evaluation code

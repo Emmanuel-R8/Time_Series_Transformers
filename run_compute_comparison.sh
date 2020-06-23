@@ -15,7 +15,7 @@ python train.py \
     --warmup_step 0 \
     --max_step 200000 \
     --tgt_len 150 \
-    --mem_len 150 \
+    --n_mems 150 \
     --eval_tgt_len 150 \
     --batch_size 60 \
     --batch_chunk 1 \

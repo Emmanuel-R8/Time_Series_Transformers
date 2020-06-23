@@ -1,932 +1,453 @@
-import math
+# coding: utf-8
+
+import os
+
+import itertools
+from functools import partial
+import warnings
+
+import pandas as pd
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
 
-from pytorch_lightning.core.lightning import LightningModule
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint
 
-from utils.proj_sigmoid import ProjectedSigmoid
+from TransformerXL_modules import TransformerXL
 
-import data_utils
+from utils.exp_utils import create_exp_dir, logging
+from utils.initialization import weights_init
+
+from utils.argparsing import parser
 
 
-class PositionalEmbedding(LightningModule):
-    def __init__(self, d_emb):
-        super(PositionalEmbedding, self).__init__()
+class GlobalState():
+    def __init__(self, data: pd.DataFrame):
+        self.datadir = "./data/etf"
 
-        assert (
-                d_emb % 2 == 0
-        ), "The size of the positional  d_emb must be an even number"
+        # dimensionality of the model's hidden states'
+        # depth of the model = no. of series = n_series
+        self.d_model = data.shape[1]
 
-        self.d_emb = d_emb
-        # TODO: check if useful: self.n_emb = math.ceil(d_emb / 2)
+        self.adapt_inp = False
+        self.n_layer = 12
 
-        # Instead of writing sin(x / f), we use sin(x * inv_freq)
-        # Frequencies range from 1 to 10000**2, sort of exponential progression
-        # with exactly d_pos_emb frequencies
-        inv_freq = 1 / (10000 ** (torch.arange(0.0, d_emb, 2.0) / d_emb))
-        # inv_freq = inv_freq.rename('InvFreq') unsupported by torch.ger
+        # number of attention heads for each attention layer in the Transformer encoder
+        self.n_head = 10
 
-        # Register this variable as a constant
-        # DIMS: ceiling(d_emb / 2)
-        self.register_buffer("inv_freq", inv_freq)
+        # dimensionality of the model's heads
+        self.d_head = 50
 
-    def forward(self, pos_seq, bsz=None):
+        # Dimensionality of the embeddings
+        self.d_pos_embed = 20
+        self.n_model = 500  # model dimension. Must be even.
+        self.d_inner = 1000
+        self.n_train = 12
+        self.n_val = 2
+        self.n_test = 2
+        self.n_batch = 60  # batch size"
+        self.batch_chunk = 1
+        self.not_tied = False
+        self.pre_lnorm = False
+        self.dropout = 0.0
+        self.dropatt = 0.0
+        self.init = "normal"  # parameter initializer to use.
+        self.emb_init = "normal"
+        self.init_range = 0.1
+        self.emb_init_range = 0.01
+        self.init_std = 0.02
+        self.proj_init_std = 0.01
+        self.optim = "adam"  # adam, sgd, adagrad
+        self.lr = 0.00025
+        self.mom = 0.0  # momentum for sgd"
+        self.scheduler = "cosine"
+        self.warmup_step = 0
+        self.decay_rate = 0.5
+        self.lr_min = 0.0
+        self.clip = 0.25
+        self.clip_nonemb = True
+        self.eta_min = 0.0
+        self.patience = 0
+        self.n_predict = 10  # help="number of tokens to predict"
+        self.eval_n_predict = 50
+        self.n_ext_ctx = 0  # help="length of the extended context"
+        self.n_mems = 0
+        self.varlen = False
+        self.same_length = True
 
-        # torch.ger = outer product
-        # DIMS: pos_seq x d_emb
-        sinusoid_inp = torch.ger(pos_seq, self.inv_freq)
+        # use the same pos embeddings after n_clamp_after
+        self.n_clamp_after = -1
+        self.seed = 42,  # help="random seed"
+        self.max_step = 10000
+        self.max_eval_steps = -1
+        self.cuda = False  # help="use CUDA"
+        self.multi_gpu = False
+        self.gpu0_bsz = -1
+        self.fp16 = None  # choices=["O1", "O2", "O0"],
+        self.log_interval = 200
+        self.eval_interval = 4000  # help="evaluation interval"
+        self.work_dir = "TXL_TS"  # help="experiment directory."
+        self.restart = True
+        self.restart_dir = ""  # help="restart dir")
+        self.debug = True
+        self.finetune_v2 = True
+        self.finetune_v3 = True
+        self.log_first_epochs = 0
+        self.restart_from = None
+        self.reset_lr = True
+        # help="reset learning schedule to start"
+        self.expand = None
+        # help="Add layers to model throughout training
+        # choices=["repeat", "reinit", "repeat_bottom", "reinit_bottom", "duplicate"],
+        self.integration = ""
+        # choices=["freeze", "reverse_distil_full",
+        # "reverse_distil_partial"]
+        self.integration_length = 0
+        self.expansion_dict = {}
+        self.widen = None  # choices=["reinit", "duplicate"]
+        self.widen_dict = {}
 
-        # DIMS: pos_seq x (2 x d_emb)
-        pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
 
-        if bsz is not None:
-            # DIMS: pos_seq x n_batch x (2 x d_emb)
-            pos_emb = pos_emb[:, None, :].expand(-1, bsz, -1)
+###############################################################################
+##
+## Helper functions
+##
+def update_dropout(global_state: GlobalState, m):
+    classname = m.__class__.__name__
+    if classname.find("Dropout") != -1:
+        if hasattr(m, "p"):
+            m.p = global_state.dropout
+    if hasattr(m, "dropout_p"):
+        m.dropout_p = global_state.dropatt
+
+
+def update_dropatt(global_state: GlobalState, m):
+    if hasattr(m, "dropatt"):
+        m.dropatt.p = global_state.dropatt
+    if hasattr(m, "dropatt_p"):
+        m.dropatt_p = global_state.dropatt
+
+
+################################################################################
+##
+## Dataset class
+##
+class IterableTimeSeries(Dataset):
+    def __init__(self, global_state: GlobalState, data: pd.DataFrame,
+                 mode="train"):
+
+        # Keeps the size of a batch to start the test set
+        self.n_batch = global_state.n_batch
+
+        # In debug mode, only use about 2 epoch of data
+        # TODO refactor to use exactly 2 epoch instead of 700 dates.
+        self.debug = global_state.debug
+        if global_state.debug:
+            actual_data = data[:700]
         else:
-            # DIMS: pos_seq x n_batch x (2 x d_emb)
-            pos_emb = pos_emb[:, None, :]
+            actual_data = data
 
-        # DIMS: pos_seq x n_batch x (2 x n_emb)
-        assert pos_emb.size()[0] == pos_seq.size()[
-            0], "pos_emb.size()[0] != pos_seq"
-        if bsz is not None:
-            assert pos_emb.size()[1] == bsz, "pos_emb.size()[1] != n_batch"
-        assert (
-                pos_emb.size()[2] == 2 * self.n_emb
-        ), "pos_emb.size()[2] != 2 * self.n_emb"
+        # Adjust the start of the dataset for training / val / test
+        if mode == "train":
+            start_index = 0
+        elif mode == "val":
+            start_index = global_state.n_model
+        elif mode == "test":
+            start_index = global_state.n_model + global_state.n_val
 
-        return pos_emb
+        # This is the actual data on which to iterate
+        self.data = actual_data[start_index:, :]
 
+        # d_series is the depth of a series (how many data points per dates)
+        # n_series is the number of series (how many dates)
+        self.n_series, self.d_series = data.shape
 
-class PositionwiseFF(LightningModule):
-    def __init__(self, n_model, d_inner, dropout, pre_lnorm=False):
-        super(PositionwiseFF, self).__init__()
+        # Each training data point is a set of series to fill the model:
+        # One date (d_series data points) for each entry to the model, that is
+        # global_state.n_model
+        self.n_model = global_state.n_model
 
-        self.n_model = n_model
-        self.d_inner = d_inner
-        self.dropout = dropout
-
-        # DIMS: n_model x n_model
-        self.CoreNet = nn.Sequential(
-            # DIMS: n_model x d_inner
-            nn.Linear(n_model, d_inner),
-            # DIMS: d_inner
-            nn.ReLU(inplace=True),
-            # DIMS: d_inner
-            nn.Dropout(dropout),
-            # DIMS: d_inner x n_model
-            nn.Linear(d_inner, n_model),
-            # DIMS: n_model
-            nn.Dropout(dropout),
+    def __getitem__(self, index):
+        return (
+            self.data[index: index + self.n_model - 1, :],
+            self.data[index + self.n_model, :],
         )
 
-        # DIMS: n_model
-        self.layer_norm = nn.LayerNorm(n_model)
-
-        self.pre_lnorm = pre_lnorm
-
-    def forward(self, input):
-        # DIMS: input -> tgt_len x n_batch x n_model
-        assert (
-                input.size()[2] == self.n_model
-        ), "PositionWideFF/forward: input.size()[0] != self.n_model"
-
-        if self.pre_lnorm:
-            # layer normalization + positionwise feed-forward
-            # DIMS: core_out -> tgt_len x n_batch x n_model
-            core_out = self.CoreNet(self.layer_norm(input))
-
-            # residual connection
-            # DIMS: output -> tgt_len x n_batch x n_model
-            output = core_out + input
-        else:
-            # positionwise feed-forward
-            # DIMS: core_out -> tgt_len x n_batch x n_model
-            core_out = self.CoreNet(input)
-
-            # residual connection + layer normalization
-            # DIMS: output -> tgt_len x n_batch x n_model
-            output = self.layer_norm(input + core_out)
-
-        return output
-
-
-class MultiHeadAttn(LightningModule):
-    def __init__(self, n_head, n_model, d_head, dropout, dropatt=0,
-                 pre_lnorm=False):
-        super(MultiHeadAttn, self).__init__()
-
-        self.n_head = n_head
-        self.n_model = n_model
-        self.d_head = d_head
-        self.dropout = dropout
-
-        # DIMS: n_model x n_head*d_head
-        self.q_net = nn.Linear(n_model, n_head * d_head, bias=False)
-
-        # DIMS: n_model x 2*n_head*d_head
-        self.kv_net = nn.Linear(n_model, 2 * n_head * d_head, bias=False)
-
-        self.drop = nn.Dropout(dropout)
-        self.dropatt = nn.Dropout(dropatt)
-
-        # DIMS: n_head*d_head x n_model
-        self.o_net = nn.Linear(n_head * d_head, n_model, bias=False)
-
-        # DIMS: n_model
-        self.layer_norm = nn.LayerNorm(n_model)
-
-        self.scale = 1 / (d_head ** 0.5)
-
-        self.pre_lnorm = pre_lnorm
-
-    def forward(self, h, attn_mask=None, mems=None):
-        # multihead attention
-        # [hlen x n_batch x n_head x d_head]
-
-        if mems is not None:
-            c = torch.cat([mems, h], 0)
-        else:
-            c = h
-
-        if self.pre_lnorm:
-            # layer normalization
-            c = self.layer_norm(c)
-
-        # DIMS: q_net -> n_model x n_head * d_head
-        head_q = self.q_net(h)
-
-        # DIMS: kv_net -> n_model x 2*n_head*d_head
-        head_k, head_v = torch.chunk(self.kv_net(c), 2, -1)
-
-        head_q = head_q.view(h.size(0), h.size(1), self.n_head, self.d_head)
-        head_k = head_k.view(c.size(0), c.size(1), self.n_head, self.d_head)
-        head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
-
-        # [qlen x klen x n_batch x n_head]
-        attn_score = torch.einsum("ibnd,jbnd->ijbn", (head_q, head_k))
-        attn_score.mul_(self.scale)
-        if attn_mask is not None and attn_mask.any().item():
-            if attn_mask.dim() == 2:
-                attn_score.masked_fill_(attn_mask[None, :, :, None],
-                                        -float("inf"))
-            elif attn_mask.dim() == 3:
-                attn_score.masked_fill_(attn_mask[:, :, :, None], -float("inf"))
-
-        # [qlen x klen x n_batch x n_head]
-        attn_prob = torch.sigmoid(attn_score, dim=1)
-        attn_prob = self.dropatt(attn_prob)
-
-        # [qlen x klen x n_batch x n_head] x [klen x n_batch x n_head x d_head] ->
-        # [qlen x n_batch x n_head x d_head]
-        attn_vec = torch.einsum("ijbn,jbnd->ibnd", (attn_prob, head_v))
-        attn_vec = attn_vec.contiguous().view(
-            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head
-        )
-
-        # linear projection
-        # DIMS: n_head*d_head x n_model
-        attn_out = self.o_net(attn_vec)
-        attn_out = self.drop(attn_out)
-
-        if self.pre_lnorm:
-            # residual connection
-            output = h + attn_out
-        else:
-            # residual connection + layer normalization
-            output = self.layer_norm(h + attn_out)
-
-        return output
-
-
-class RelMultiHeadAttn(LightningModule):
-    def __init__(
-            self,
-            n_head,
-            n_model,
-            d_head,
-            dropout,
-            dropatt=0,
-            tgt_len=None,
-            ext_len=None,
-            mem_len=None,
-            pre_lnorm=False,
-    ):
-        super(RelMultiHeadAttn, self).__init__()
-
-        self.n_head = n_head
-        self.n_model = n_model
-        self.d_head = d_head
-        self.dropout = dropout
-
-        # DIMS: n_model x 3*n_head*d_head
-        self.qkv_net = nn.Linear(n_model, 3 * n_head * d_head, bias=False)
-
-        # DIMS:
-        self.drop = nn.Dropout(dropout)
-        self.dropatt = nn.Dropout(dropatt)
-
-        # DIMS: n_head*d_head x n_model
-        self.o_net = nn.Linear(n_head * d_head, n_model, bias=False)
-
-        # DIMS: n_model
-        self.layer_norm = nn.LayerNorm(n_model)
-
-        self.scale = 1 / (d_head ** 0.5)
-
-        self.pre_lnorm = pre_lnorm
-
-    def _parallelogram_mask(self, h, w, left=False):
-        mask = torch.ones((h, w)).byte()
-        m = min(h, w)
-        mask[:m, :m] = torch.triu(mask[:m, :m])
-        mask[-m:, -m:] = torch.tril(mask[-m:, -m:])
-
-        if left:
-            return mask
-        else:
-            return mask.flip(0)
-
-    def _shift(self, x, qlen, klen, mask, left=False):
-        if qlen > 1:
-            zero_pad = torch.zeros(
-                (x.size(0), qlen - 1, x.size(2), x.size(3)),
-                device=x.device,
-                dtype=x.dtype,
-            )
-        else:
-            zero_pad = torch.zeros(0, device=x.device, dtype=x.dtype)
-
-        if left:
-            mask = mask.flip(1)
-            x_padded = torch.cat([zero_pad, x], dim=1).expand(qlen, -1, -1, -1)
-        else:
-            x_padded = torch.cat([x, zero_pad], dim=1).expand(qlen, -1, -1, -1)
-
-        x = x_padded.masked_select(mask[:, :, None, None]).view(
-            qlen, klen, x.size(2), x.size(3)
-        )
-
-        return x
-
-    def _rel_shift(self, x, zero_triu=False):
-
-        # Create a block of zeros that will be added along the 4th dimension
-        # DIMS: x0 x x1 x x2 x 1
-        zero_pad = torch.zeros(
-            (x.size(0), x.size(1), x.size(2), 1), device=x.device, dtype=x.dtype
-        )
-
-        # Add along the 4th dimension
-        # DIMS: x0 x x1 x x2 x (x3 + 1)
-        x_padded = torch.cat([zero_pad, x], dim=3)
-
-        # CHECK: Those 2 lines makes little sense
-        # x_padded = x_padded.view(x.size(0), x.size(1), x.size(3) + 1, x.size(2))
-        # x = x_padded[:, :, 1:].view_as(x)
-
-        # This version retains the original shape of x
-        # DIMS: x0 x x1 x x2 x x3
-        x = x_padded[:, :, :, 1:].view_as(x)
-
-        if zero_triu:
-            ones = torch.ones((x.size(2), x.size(3)))
-
-            # Return a lower triangular matrix
-            x = x * torch.tril(ones, diagonal=x.size(3) - x.size(2))[None, None,
-                    :, :]
-
-        return x
-
-    def forward(self, w, r, attn_mask=None, mems=None):
-        raise NotImplementedError
-
-
-class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
-    def __init__(self, *args, **kwargs):
-        super(RelPartialLearnableMultiHeadAttn, self).__init__(*args, **kwargs)
-
-        # DIMS: n_model x n_head*d_head
-        self.r_net = nn.Linear(self.n_model, self.n_head * self.d_head,
-                               bias=False)
-
-    def forward(self, w, r, r_w_bias, r_r_bias, attn_mask=None, mems=None):
-        qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
-
-        # DIMS: w -> tgt_len x n_batch x n_model
-        # qlen = tgt_len
-        # DIMS: r -> tgt_len x 1 x n_model
-        # rlen = tgt_len
-        # DIMS: r -> n_head x d_head
-        # DIMS: r -> n_head x d_head
-
-        if mems is not None:
-            # DIMS: 0 at the beginning
-
-            # Concatenate memories + current segment along 1st dimension
-            # DIMS: mems -> n_mem x n_model
-            # DIMS: w ->    tgt_len x n_batch x n_model
-            # DIMS: cat ->  (n_mem+n_model) x n_model
-
-            # CHECK: mems has to be copied to have one per training value in
-            # the batch
-            # DIMS: w -> tgt_len x n_batch x n_model
-            # DIMS: mems -> ???
-            # DIMS: cat -> (tgt_len + ???) x n_batch x n_model
-            cat = torch.cat([mems, w], 0)
-            if self.pre_lnorm:
-                # DIMS: cat ->     tgt_len x n_batch x n_model
-                # DIMS: qkc_net -> n_model x 3*n_head*d_head
-                # DIMS: w_heads -> (tgt_len + ???) x n_batch x 3*n_head*d_head
-                w_heads = self.qkv_net(self.layer_norm(cat))
-            else:
-                # DIMS: cat ->     tgt_len x n_batch x n_model
-                # DIMS: qkc_net -> n_model x 3*n_head*d_head
-                # DIMS: w_heads -> (tgt_len + ???) x n_batch x 3*n_head*d_head
-                w_heads = self.qkv_net(cat)
-
-            # DIMS: r -> tgt_len x 1 x n_model
-            # DIMS: r_net -> n_model x n_head*d_head
-            # DIMS: r_head_k -> tgt_len x n_head x d_head
-            r_head_k = self.r_net(r)
-
-            # DIMS: w_heads -> tgt_len x n_batch x 3*n_head*d_head
-            # DIMS: w_head_q -> tgt_len x n_batch x n_head x d_head
-            # DIMS: w_head_k -> tgt_len x n_batch x n_head x d_head
-            # DIMS: w_head_v -> tgt_len x n_batch x n_head x d_head
-            w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
-
-            # DIMS: w_head_q -> qlen x n_batch x n_head x d_head
-            w_head_q = w_head_q[-qlen:]
-        else:
-            if self.pre_lnorm:
-                # DIMS: w -> tgt_len x n_batch x n_model
-                # DIMS: qkv_net -> n_model x 3*n_head*d_head
-                # DIMS: w_heads -> tgt_len x n_batch x 3*n_head*d_head
-                w_heads = self.qkv_net(self.layer_norm(w))
-            else:
-                # DIMS: w -> tgt_len x n_batch x n_model
-                # DIMS: qkv_net -> n_model x 3*n_head*d_head
-                # DIMS: w_heads -> tgt_len x n_batch x 3*n_head*d_head
-                w_heads = self.qkv_net(w)
-
-            # DIMS: r -> tgt_len x 1 x n_model
-            # DIMS: r_net -> n_model x n_head*d_head
-            # DIMS: r_head_k -> tgt_len x n_head x d_head
-            r_head_k = self.r_net(r)
-
-            # DIMS: w_heads -> tgt_len x n_batch x 3*n_head*d_head
-            # DIMS: w_head_q -> tgt_len x n_batch x n_head x d_head
-            # DIMS: w_head_k -> tgt_len x n_batch x n_head x d_head
-            # DIMS: w_head_v -> tgt_len x n_batch x n_head x d_head
-            w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
-
-        # klen = tgt_len
-        klen = w_head_k.size(0)
-
-        # DIMS: qlen x n_batch x n_head x d_head
-        w_head_q = w_head_q.view(qlen, bsz, self.n_head, self.d_head)
-
-        # DIMS: klen x n_batch x n_head x d_head
-        w_head_k = w_head_k.view(klen, bsz, self.n_head, self.d_head)
-
-        # DIMS: klen x n_batch x n_head x d_head
-        w_head_v = w_head_v.view(klen, bsz, self.n_head, self.d_head)
-
-        # DIMS: rlen x n_head x d_head
-        r_head_k = r_head_k.view(rlen, self.n_head, self.d_head)
-
-        # compute attention score
-        # DIMS: w_head_q ->  qlen x n_batch x n_head x d_head
-        # DIMS: r_w_bias ->               n_head x n_head
-        # DIMS: rw_head_q -> qlen x n_batch x n_head x d_head
-        rw_head_q = w_head_q + r_w_bias
-
-        # DIMS: rw_head_q -> qlen x n_batch x n_head x d_head
-        # DIMS: w_head_k ->  klen x n_batch x n_head x d_head
-        # DIMS: AC ->        n_batch x n_head x qlen x klen
-        AC = torch.einsum("ibnd,jbnd->bnij", (rw_head_q, w_head_k))
-
-        # DIMS: w_head_q ->  qlen x n_batch x n_head x d_head
-        # DIMS: r_r_bias ->               n_head x n_head
-        # DIMS: rr_head_q -> qlen x n_batch x n_head x d_head
-        rr_head_q = w_head_q + r_r_bias
-
-        # DIMS: rr_head_q -> qlen x n_batch x n_head x d_head
-        # DIMS: r_head_k ->        rlen x n_head x d_head
-        # DIMS: BD ->        n_batch x n_head x qlen x rlen
-        BD = torch.einsum("ibnd,jnd->bnij", (rr_head_q, r_head_k))
-
-        # DIMS: BD -> n_batch x n_head x qlen x rlen
-        BD = self._rel_shift(BD)
-
-        # DIMS: AC -> n_batch x n_head x qlen x klen
-        # DIMS: BD -> n_batch x n_head x qlen x rlen
-        # DIMS: attn_score -> n_batch x n_head x qlen x rlen
-        # klen = rlen = tgt_len
-        attn_score = AC + BD
-        attn_score.mul_(self.scale)
-
-        # compute attention probability
-        # DIMS: attn_mask ->                 tgt_len x tgt_len x 1
-        # DIMS: attn_score -> n_batch x n_head x tgt_len x tgt_len
-        if attn_mask is not None and attn_mask.any().item():
-            if attn_mask.dim() == 2:
-                attn_score.masked_fill_(attn_mask[None, None, :, :],
-                                        -float("inf"))
-            elif attn_mask.dim() == 3:
-                attn_score.masked_fill_(attn_mask[:, None, :, :], -float("inf"))
-
-        # [n_batch x n_head x qlen x klen]
-        attn_prob = torch.sigmoid(attn_score)
-        attn_prob = self.dropatt(attn_prob)
-
-        # compute attention vector
-        attn_vec = torch.einsum("bnij,jbnd->ibnd", (attn_prob, w_head_v))
-
-        # [qlen x n_batch x n_head x d_head]
-        attn_vec = attn_vec.contiguous().view(
-            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head
-        )
-
-        # linear projection
-        # DIMS: n_head*d_head x n_model
-        attn_out = self.o_net(attn_vec)
-        attn_out = self.drop(attn_out)
-
-        if self.pre_lnorm:
-            # residual connection
-            output = w + attn_out
-        else:
-            # residual connection + layer normalization
-            output = self.layer_norm(w + attn_out)
-
-        return output
-
-
-class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
-    def __init__(self, *args, **kwargs):
-        super(RelLearnableMultiHeadAttn, self).__init__(*args, **kwargs)
-
-    def forward(self, w, r_emb, r_w_bias, r_bias, attn_mask=None, mems=None):
-        # r_emb: [klen, n_head, d_head], used for term B
-        # r_w_bias: [n_head, d_head], used for term C
-        # r_bias: [klen, n_head], used for term D
-
-        qlen, bsz = w.size(0), w.size(1)
-
-        if mems is not None:
-            cat = torch.cat([mems, w], 0)
-            if self.pre_lnorm:
-                # DIMS: n_model x 3*n_head*d_head
-                w_heads = self.qkv_net(self.layer_norm(cat))
-            else:
-                # DIMS: n_model x 3*n_head*d_head
-                w_heads = self.qkv_net(cat)
-            w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
-
-            w_head_q = w_head_q[-qlen:]
-        else:
-            if self.pre_lnorm:
-                # DIMS: n_model x 3*n_head*d_head
-                w_heads = self.qkv_net(self.layer_norm(w))
-            else:
-                # DIMS: n_model x 3*n_head*d_head
-                w_heads = self.qkv_net(w)
-
-            w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
-
-        klen = w_head_k.size(0)
-
-        # qlen x n_batch x n_head x d_head
-        w_head_q = w_head_q.view(qlen, bsz, self.n_head, self.d_head)
-
-        # qlen x n_batch x n_head x d_head
-        w_head_k = w_head_k.view(klen, bsz, self.n_head, self.d_head)
-
-        # qlen x n_batch x n_head x d_head
-        w_head_v = w_head_v.view(klen, bsz, self.n_head, self.d_head)
-
-        if klen > r_emb.size(0):
-            r_emb_pad = r_emb[0:1].expand(klen - r_emb.size(0), -1, -1)
-            r_emb = torch.cat([r_emb_pad, r_emb], 0)
-            r_bias_pad = r_bias[0:1].expand(klen - r_bias.size(0), -1)
-            r_bias = torch.cat([r_bias_pad, r_bias], 0)
-        else:
-            r_emb = r_emb[-klen:]
-            r_bias = r_bias[-klen:]
-
-        # compute attention score
-        # qlen x n_batch x n_head x d_head
-        rw_head_q = w_head_q + r_w_bias[None]
-
-        # qlen x klen x n_batch x n_head
-        AC = torch.einsum("ibnd,jbnd->ijbn", (rw_head_q, w_head_k))
-
-        # qlen x klen x n_batch x n_head
-        B_ = torch.einsum("ibnd,jnd->ijbn", (w_head_q, r_emb))
-
-        # 1    x klen x 1   x n_head
-        D_ = r_bias[None, :, None]
-        BD = self._rel_shift(B_ + D_)
-
-        # [qlen x klen x n_batch x n_head]
-        attn_score = AC + BD
-        attn_score.mul_(self.scale)
-
-        # compute attention probability
-        if attn_mask is not None and attn_mask.any().item():
-            if attn_mask.dim() == 2:
-                attn_score.masked_fill_(attn_mask[None, :, :, None],
-                                        -float("inf"))
-            elif attn_mask.dim() == 3:
-                attn_score.masked_fill_(attn_mask[:, :, :, None], -float("inf"))
-
-        # [qlen x klen x n_batch x n_head]
-        attn_prob = torch.sigmoid(attn_score, dim=1)
-        attn_prob = self.dropatt(attn_prob)
-
-        # compute attention vector
-        attn_vec = torch.einsum("ijbn,jbnd->ibnd", (attn_prob, w_head_v))
-
-        # [qlen x n_batch x n_head x d_head]
-        attn_vec = attn_vec.contiguous().view(
-            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head
-        )
-
-        # linear projection
-        # DIMS: n_head*d_head x n_model
-        attn_out = self.o_net(attn_vec)
-        attn_out = self.drop(attn_out)
-
-        if self.pre_lnorm:
-            # residual connection
-            output = w + attn_out
-        else:
-            # residual connection + layer normalization
-            output = self.layer_norm(w + attn_out)
-
-        return output
-
-
-class DecoderLayer(LightningModule):
-    def __init__(self, n_head, n_model, d_head, d_inner, dropout, **kwargs):
-        super(DecoderLayer, self).__init__()
-
-        self.dec_attn = MultiHeadAttn(n_head, n_model, d_head, dropout,
-                                      **kwargs)
-        self.pos_ff = PositionwiseFF(
-            n_model, d_inner, dropout, pre_lnorm=kwargs.get("pre_lnorm")
-        )
-
-    def forward(self, dec_inp, dec_attn_mask=None, mems=None):
-        output = self.dec_attn(dec_inp, attn_mask=dec_attn_mask, mems=mems)
-        output = self.pos_ff(output)
-
-        return output
-
-
-class RelLearnableDecoderLayer(LightningModule):
-    def __init__(self, n_head, n_model, d_head, d_inner, dropout, **kwargs):
-        super(RelLearnableDecoderLayer, self).__init__()
-
-        self.dec_attn = RelLearnableMultiHeadAttn(
-            n_head, n_model, d_head, dropout, **kwargs
-        )
-        self.pos_ff = PositionwiseFF(
-            n_model, d_inner, dropout, pre_lnorm=kwargs.get("pre_lnorm")
-        )
-
-    def forward(self, dec_inp, r_emb, r_w_bias, r_bias, dec_attn_mask=None,
-                mems=None):
-        output = self.dec_attn(
-            dec_inp, r_emb, r_w_bias, r_bias, attn_mask=dec_attn_mask, mems=mems
-        )
-        output = self.pos_ff(output)
-
-        return output
-
-
-class RelPartialLearnableDecoderLayer(LightningModule):
-    def __init__(self, n_head, n_model, d_head, d_inner, dropout, **kwargs):
-        super(RelPartialLearnableDecoderLayer, self).__init__()
-
-        # DIMS: n_model x n_head*d_head
-        self.dec_attn = RelPartialLearnableMultiHeadAttn(
-            n_head, n_model, d_head, dropout, **kwargs
-        )
-
-        # DIMS: n_model x n_model
-        self.pos_ff = PositionwiseFF(
-            n_model, d_inner, dropout, pre_lnorm=kwargs.get("pre_lnorm")
-        )
-
-    def forward(self, dec_inp, r, r_w_bias, r_r_bias, dec_attn_mask=None,
-                mems=None):
-        # DIMS: r -> tgt_len x 1 x (n_model + 1)
-        # DIMS: r_w_bias -> n_head x d_head
-        # DIMS: r_r_bias -> n_head x d_head
-        # DIMS: output ->
-        output = self.dec_attn(
-            dec_inp, r, r_w_bias, r_r_bias, attn_mask=dec_attn_mask, mems=mems
-        )
-        output = self.pos_ff(output)
-
-        return output
-
-
-class AdaptiveEmbedding(LightningModule):
-    def __init__(
-            self, d_model, d_embed, d_proj, sample_softmax=False
-    ):
-        super(AdaptiveEmbedding, self).__init__()
-
-        self.d_model = d_model
-        self.d_embed = d_embed
-
-        self.d_proj = d_proj
-
-        self.emb_scale = d_proj ** 0.5
-
-        self.emb_layers = nn.ModuleList()
-        self.emb_projs = nn.ParameterList()
-        self.emb_layers.append(
-            nn.Embedding(d_model, d_embed, sparse=(sample_softmax > 0))
-        )
-        if d_proj != d_embed:
-            self.emb_projs.append(nn.Parameter(torch.Tensor(d_proj, d_embed)))
-
-    def forward(self, inp):
-        embed = self.emb_layers[0](inp)
-        if self.d_proj != self.d_embed:
-            embed = F.linear(embed, self.emb_projs[0])
-        embed.mul_(self.emb_scale)
-
-        return embed
-
-
-class TransformerXL(LightningModule):
-    def __init__(
-            self,
-            d_model: int,
-            n_layer: int,
-            n_head: int,
-            n_model: int,
-            d_head: int,
-            d_inner: int,
-            dropout: object,
-            dropatt: object,
-            d_embed: object = None,
-            pre_lnorm: bool = False,
-            tgt_len: object = None,
-            ext_len: object = None,
-            mem_len: object = None,
-            adapt_inp: object = False,
-            same_length: object = False,
-            clamp_len: object = -1,
-    ) -> object:
-
-        super(TransformerXL, self).__init__()
-        self.d_model = d_model
-
-        self.d_embed = n_model if d_embed is None else d_embed
-        self.n_model = n_model
-        self.n_head = n_head
-        self.d_head = d_head
-
-        self.word_emb = AdaptiveEmbedding(
-            d_model, d_embed, n_model
-        )
-
-        self.drop = nn.Dropout(dropout)
-
-        self.n_layer = n_layer
-
-        self.tgt_len = tgt_len
-        self.mem_len = mem_len
-        self.ext_len = ext_len
-        self.max_n_keys = tgt_len + ext_len + mem_len
-
-        self.layers = nn.ModuleList()
-        for i in range(n_layer):
-            self.layers.append(
-                RelPartialLearnableDecoderLayer(
-                    n_head,
-                    n_model,
-                    d_head,
-                    d_inner,
-                    dropout,
-                    tgt_len=tgt_len,
-                    ext_len=ext_len,
-                    mem_len=mem_len,
-                    dropatt=dropatt,
-                    pre_lnorm=pre_lnorm,
-                )
+    def __len__(self):
+        """
+        Total number of samples in the dataset
+        """
+        return self.n_series
+
+
+################################################################################
+##
+## Lightning module of the model
+##
+class Train_TransformerXL(pl.LightningModule):
+    def __init__(self, global_state: GlobalState):
+        super(Train_TransformerXL, self).__init__()
+
+        self.global_state = global_state
+
+        self.model = TransformerXL(d_model=global_state.d_model,
+                                   n_model=global_state.n_model,
+                                   n_head=global_state.n_head,
+                                   d_head=global_state.d_head,
+                                   d_inner=global_state.d_inner,
+                                   n_layer=global_state.n_layer,
+                                   dropout=global_state.dropout,
+                                   dropatt=global_state.dropatt,
+                                   d_pos_embed=global_state.d_pos_embed,
+                                   pre_lnorm=global_state.pre_lnorm,
+                                   n_predict=global_state.n_predict,
+                                   n_ext_ctx=global_state.n_ext_ctx,
+                                   n_mems=global_state.n_mems,
+                                   adapt_inp=global_state.adapt_inp,
+                                   same_length=global_state.same_length,
+                                   n_clamp_after=global_state.n_clamp_after)
+        self.criteria = nn.CrossEntropyLoss()
+
+    ############################################################################
+    #
+    # STEP 1: Define the model
+    #
+    ############################################################################
+
+    def forward(self, x):
+        return self.model(x)
+
+    ############################################################################
+    ##
+    ## STEP 2: Prepare a dataset that will be available to the dataloaders
+    ##
+    ############################################################################
+
+    # prepare_data() makes sure that data is available for training
+    # We assume that data was downloaded, save as a pickle, NaN not changed yet.
+    # Create clean data set with NaN -> 0
+    # WARNING Change when using market indices as well as returns (cannot fill
+    # NaN indices with 0)
+    def prepare_data(self) -> None:
+        data_set = pd.read_pickle(
+            f"{self.global_state['datadir']}/allData.pickle")
+        data_set.fillna(0, inplace=True)
+        data_set.to_pickle(
+            f"{self.global_state['datadir']}/allDataClean.pickle")
+        return None
+
+    ############################################################################
+    #
+    # STEP 3: Configure the optimizer (how to use the data in the model)
+    #
+    ############################################################################
+
+    ############################################################################
+    #
+    # STEP 3.1: Build a scheduler
+
+    def build_scheduler(self, optimizers):
+        optimizer, optimizer_sparse = optimizers
+        scheduler_sparse = None
+
+        if self.global_state.scheduler == "cosine":
+            # here we do not set eta_min to lr_min to be backward compatible
+            # because in previous versions eta_min is default to 0
+            # rather than the default value of lr_min 1e-6
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                optimizer,
+                self.global_state.max_step,
+                eta_min=self.global_state.eta_min,
+            )  # should use eta_min arg
+
+        elif self.global_state.scheduler == "inv_sqrt":
+            # originally used for Transformer (in Attention is all you need)
+            def lr_lambda(step):
+                # return a multiplier instead of a learning rate
+                if step == 0 and self.global_state.warmup_step == 0:
+                    return 1.0
+                else:
+                    return (
+                        1.0 / (step ** 0.5)
+                        if step > self.global_state.warmup_step
+                        else step / (self.global_state.warmup_step ** 1.5)
+                    )
+
+            scheduler = optim.lr_scheduler.LambdaLR(optimizer,
+                                                    lr_lambda=lr_lambda)
+
+        elif self.global_state.scheduler == "dev_perf":
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                factor=self.global_state.decay_rate,
+                patience=self.global_state.patience,
+                min_lr=self.global_state.lr_min,
             )
 
-        self.crit = ProjectedSigmoid(
-            d_model, d_embed, n_model)
+        elif self.global_state.scheduler == "constant":
+            pass
 
-        self.same_length = same_length
-        self.clamp_len = clamp_len
-        self.training_steps = 0
-        self.compute = 0
-
-        self._create_params()
-
-    def _create_params(self):
-        # default attention
-        # DIMS: ceiling(d_emb / 2)
-        self.pos_emb = PositionalEmbedding(self.n_model)
-
-        # DIMS: n_head x n_head
-        self.r_w_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
-
-        # DIMS: n_head x n_head
-        self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
-
-    def reset_length(self, tgt_len, ext_len, mem_len):
-        self.tgt_len = tgt_len
-        self.mem_len = mem_len
-        self.ext_len = ext_len
-
-    def init_mems(self):
-        if self.mem_len > 0:
-            mems = []
-            param = next(self.parameters())
-            for i in range(self.n_layer + 1):
-                empty = torch.empty(0, dtype=param.dtype, device=param.device)
-                mems.append(empty)
-
-            return mems
         else:
-            return None
+            raise ValueError(
+                f"scheduler type {self.global_state['scheduler']} not recognized"
+            )
 
-    def _update_mems(self, hids, mems, qlen, mlen):
-        # does not deal with None
-        if mems is None:
-            return None
+        return scheduler, scheduler_sparse
 
-        # mems is not None
-        assert len(hids) == len(
-            mems
-        ), "len(hids) != len(mems) ({len(hids)} != {len(mems)})"
+    ############################################################################
+    #
+    # STEP 3.2: Build an optimizer
 
-        # There are `mlen + qlen` steps that can be cached into mems
-        # For the next step, the last `ext_len` of the `qlen` tokens
-        # will be used as the extended context. Hence, we only cache
-        # the tokens from `mlen + qlen - self.ext_len - self.mem_len`
-        # to `mlen + qlen - self.ext_len`.
-        with torch.no_grad():
-            new_mems = []
-            end_idx = mlen + max(0, qlen - 0 - self.ext_len)
-            beg_idx = max(0, end_idx - self.mem_len)
-            for i in range(len(hids)):
-                cat = torch.cat([mems[i], hids[i]], dim=0)
-                new_mems.append(cat[beg_idx:end_idx].detach())
+    def build_optimizer(self, reload=False):
+        optimizer_sparse = None
+        if self.global_state.optim.lower() == "sgd":
+            optimizer = optim.SGD(
+                self.model.parameters(),
+                lr=self.global_state.lr,
+                momentum=self.global_state.mom,
+            )
+        elif self.global_state.optim.lower() == "adam":
+            optimizer = optim.Adam(self.model.parameters(),
+                                   lr=self.global_state.lr)
+        elif self.global_state.optim.lower() == "adagrad":
+            optimizer = optim.Adagrad(
+                self.model.parameters(), lr=self.global_state.lr
+            )
+        else:
+            raise ValueError(
+                f"optimizer type {self.global_state['optim']} not recognized"
+            )
 
-        return new_mems
-
-    def _forward(self, dec_inp, mems=None):
-        qlen, bsz = dec_inp.size()
-
-        word_emb = self.word_emb(dec_inp)
-
-        mlen = mems[0].size(0) if mems is not None else 0
-        klen = mlen + qlen
-        if self.same_length:
-            all_ones = word_emb.new_ones(qlen, klen)
-            mask_len = klen - self.mem_len
-            if mask_len > 0:
-                mask_shift_len = qlen - mask_len
+        if reload:
+            if self.global_state.restart_from is not None:
+                optim_name = f"optimizer_{self.global_state['restart_from']}.pt"
             else:
-                mask_shift_len = qlen
-            dec_attn_mask = torch.triu(all_ones, 1 + mlen) + torch.tril(
-                all_ones, -mask_shift_len
-            )
-            # REVERT? dec_attn_mask = dec_attn_mask.byte()[:, :, None]  # -1
-            dec_attn_mask = dec_attn_mask.byte()
-        else:
-            dec_attn_mask = torch.triu(word_emb.new_ones(qlen, klen),
-                                       diagonal=1 + mlen)
-            # REVERT? dec_attn_mask = dec_attn_mask.byte()[:, :, None]  # -1
-            dec_attn_mask = dec_attn_mask.byte()
+                optim_name = "optimizer.pt"
+            optim_file_name = os.path.join(self.global_state.restart_dir,
+                                           optim_name)
+            logging(f"reloading {optim_file_name}")
+            if os.path.exists(
+                    os.path.join(self.global_state.restart_dir, optim_name)
+            ):
+                with open(
+                        os.path.join(self.global_state.restart_dir,
+                                     optim_name), "rb"
+                ) as optim_file:
+                    opt_state_dict = torch.load(optim_file)
+                    try:
+                        optimizer.load_state_dict(opt_state_dict)
+                    # in case the optimizer param groups aren't the same shape,
+                    # merge them
+                    except:
+                        logging("merging optimizer param groups")
+                        opt_state_dict["param_groups"][0]["params"] = [
+                            param
+                            for param_group in opt_state_dict["param_groups"]
+                            for param in param_group["params"]
+                        ]
+                        opt_state_dict["param_groups"] = [
+                            opt_state_dict["param_groups"][0]
+                        ]
+                        optimizer.load_state_dict(opt_state_dict)
+            else:
+                logging("Optimizer was not saved. Start from scratch.")
 
-        dec_attn_mask = dec_attn_mask.bool()  # Convert to bool
+        return optimizer, optimizer_sparse
 
-        hids = []
+    def configure_optimizers(self):
+        optimizer = self.build_optimizer()
+        scheduler = self.build_scheduler(optimizer)
+        return [optimizer], [scheduler]
 
-        # Default
-        # DIMS: pos_seq -> tgt_len
-        pos_seq = torch.arange(
-            klen - 1, -1, -1.0, device=word_emb.device, dtype=word_emb.dtype
+    ############################################################################
+    #
+    # STEP 4: How to train the model: first a dalaloader, the how to train
+    #
+    ############################################################################
+
+    def train_loader(self):
+        return DataLoader(
+            IterableTimeSeries(self.global_state, self.data, mode="train"),
+            batch_size=self.global_state.n_batch,
+            num_workers=4 - 1,
         )
-        if self.clamp_len > 0:
-            pos_seq.clamp_(max=self.clamp_len)
-        pos_emb = self.pos_emb(pos_seq)
 
-        core_out = self.drop(word_emb)
-        pos_emb = self.drop(pos_emb)
+    def training_step(self, batch, batch_nb):
+        # REQUIRED
+        x, y = batch
+        y_hat = self.forward(x)
+        loss = self.criteria(y_hat, y)
+        loss = loss.unsqueeze(dim=-1)
+        return {"loss": loss}
 
-        hids.append(core_out)
-        for i, layer in enumerate(self.layers):
-            mems_i = None if mems is None else mems[i]
-            core_out = layer(
-                # DIMS: tgt_len x 1 x n_model
-                core_out,
-                # DIMS: tgt_len x 1 x (n_model+1)
-                pos_emb,
-                # DIMS: n_head x n_head
-                self.r_w_bias,
-                # DIMS: n_head x n_head
-                self.r_r_bias,
-                dec_attn_mask=dec_attn_mask,
-                mems=mems_i,
-            )
-            hids.append(core_out)
+    ############################################################################
+    #
+    # STEP 5: Then validate on a validation set dataloader
+    #
+    ############################################################################
 
-        core_out = self.drop(core_out)
+    def val_loader(self):
+        return DataLoader(
+            IterableTimeSeries(self.global_state, self.data, mode="val"),
+            batch_size=self.global_state.n_batch,
+            num_workers=4 - 1,
+        )
 
-        new_mems = self._update_mems(hids, mems, mlen, qlen)
+    def validation_step(self, batch, batch_nb):
+        # OPTIONAL
+        x, y = batch
+        y_hat = self.forward(x)
+        val_loss = self.criteria(y_hat, y)
+        val_loss = val_loss.unsqueeze(dim=-1)
+        return {"val_loss": val_loss}
 
-        return core_out, new_mems
+    def validation_end(self, outputs):
+        # OPTIONAL
+        avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
+        return {"avg_val_loss": avg_loss}
 
-    def forward(self, data, target, *mems):
-        # nn.DataParallel does not allow size(0) tensors to be broadcasted.
-        # So, have to initialize size(0) mems inside the model forward.
-        # Moreover, have to return new_mems to allow nn.DataParallel to piece
-        # them together.
+    # def validation_epoch_end(self, outputs):
+    #     avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
+    #     tensorboard_logs = {'val_loss': avg_loss}
+    #     return {'val_loss': avg_loss, 'log': tensorboard_logs}
 
-        if not mems:
-            mems = self.init_mems()
+    ############################################################################
+    ##
+    ## STEP 6: Finally test the model
+    ##
+    ############################################################################
 
-        tgt_len = target.size(0)
-        hidden, new_mems = self._forward(data, mems=mems)
+    def test_loader(self):
+        return DataLoader(
+            IterableTimeSeries(self.global_state, self.data, mode="test"),
+            batch_size=self.global_state.n_batch,
+            num_workers=4 - 1,
+        )
 
-        pred_hid = hidden[-tgt_len:]
-        loss = self.crit(pred_hid.reshape(-1, pred_hid.size(-1)),
-                         target.reshape(-1))
-        loss = loss.view(tgt_len, -1)
+    # def test_step(self, batch, batch_idx):
+    #     x, y = batch
+    #     logits = self(x)
+    #     loss = F.nll_loss(logits, y)
+    #     return {'val_loss': loss}
+    #
+    # def test_epoch_end(self, outputs):
+    #     avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
+    #     tensorboard_logs = {'val_loss': avg_loss}
+    #     return {'val_loss': avg_loss, 'log': tensorboard_logs}
 
-        if new_mems is None:
-            return [loss]
-        else:
-            return [loss] + new_mems
 
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="unit test")
-
-    parser.add_argument("--n_layer", type=int, default=4, help="")
-    parser.add_argument("--n_rel_layer", type=int, default=4, help="")
-    parser.add_argument("--n_head", type=int, default=2, help="")
-    parser.add_argument("--d_head", type=int, default=2, help="")
-    parser.add_argument("--n_model", type=int, default=200, help="")
-    parser.add_argument("--d_embed", type=int, default=200, help="")
-    parser.add_argument("--d_inner", type=int, default=200, help="")
-    parser.add_argument("--dropout", type=float, default=0.0, help="")
-    parser.add_argument("--cuda", action="store_true", help="")
-    parser.add_argument("--seed", type=int, default=1111, help="")
-    parser.add_argument("--multi_gpu", action="store_true", help="")
-
-    args = parser.parse_args()
-
-    device = torch.device("cuda" if args.cuda else "cpu")
-
-    B = 4
-    tgt_len, mem_len, ext_len = 36, 36, 0
-    data_len = tgt_len * 20
-    args.d_model = 10000
-
-    data = torch.LongTensor(data_len * B).random_(0, args.d_model).to(device)
-    diter = data_utils.OrderedIterator(data, B, tgt_len, device=device,
-                                       ext_len=ext_len)
-
-    for d_embed in [200, 100]:
-        model = TransformerXL(
-            args.d_model,
-            args.n_layer,
-            args.n_head,
-            args.n_model,
-            args.d_head,
-            args.d_inner,
-            args.dropout,
-            dropatt=args.dropout,
-            d_embed=d_embed,
-            pre_lnorm=True,
-            tgt_len=tgt_len,
-            ext_len=ext_len,
-            mem_len=mem_len,
-        ).to(device)
-
-        print(sum(p.numel() for p in model.parameters()))
-
-        mems = tuple()
-        for idx, (inp, tgt, seqlen) in enumerate(diter):
-            print("batch {}".format(idx))
-            out = model(inp, tgt, *mems)
-            mems = out[1:]
+################################################################################
+##
+## Checkpoint callback to save best model like keras.
+##
+checkpoint_callback = ModelCheckpoint(
+    filepath="../working",
+    save_top_k=1,
+    verbose=True,
+    monitor="avg_val_loss",
+    mode="min",
+)

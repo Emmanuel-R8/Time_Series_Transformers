@@ -11,13 +11,13 @@ class OrderedIterator():
     def __init__(self, data: torch.LongTensor, d_batch: int = 10,
                  n_batch_per_test: int = 1,
                  device="cpu",
-                 ext_len=None):
+                 n_ext_ctx=None):
         """
             data -- LongTensor -- the LongTensor is strictly ordered
         """
         self.d_batch = d_batch
         self.bptt = n_batch_per_test
-        self.ext_len = 0 if ext_len is None else ext_len
+        self.n_ext_ctx = 0 if n_ext_ctx is None else n_ext_ctx
 
         self.device = device
 
@@ -42,7 +42,7 @@ class OrderedIterator():
         seq_len = min(bptt, self.data.size(0) - 1 - i)
 
         end_idx = i + seq_len
-        beg_idx = max(0, i - self.ext_len)
+        beg_idx = max(0, i - self.n_ext_ctx)
 
         data = self.data[beg_idx:end_idx]
         target = self.data[i + 1: i + 1 + seq_len]
