@@ -1,29 +1,10 @@
 # coding: utf-8
 
-import os
-
-import itertools
-from functools import partial
-import warnings
-
-import pandas as pd
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
-
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
-
-from TransformerXL_model import Train_TransformerXL, GlobalState
-
-from utils.exp_utils import create_exp_dir, logging
-from utils.initialization import weights_init
-
 from utils.argparsing import parser
+import pandas as pd
+import pytorch_lightning as pl
 
+from TransformerXL_model import TransformerXL_Trainer, GlobalState
 
 ################################################################################
 ##
@@ -47,4 +28,9 @@ if __name__ == "__main__":
             global_state.__dict__[k] = v
 
     # build a model
-    train_transformerxl = Train_TransformerXL(global_state)
+    transformerxl_model = TransformerXL_Trainer(global_state)
+    pl.seed_everything(global_state.seed)
+
+    transformerxl_trainer = pl.Trainer()
+    transformerxl_trainer.fit(transformerxl_model)
+

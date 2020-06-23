@@ -71,7 +71,7 @@ class OrderedIterator():
 
 def get_time_series(datadir, dataset):
     print("Loading cached dataset for: ")
-    print(f"   datadir: {datadir}")
+    print(f"   data_dir: {datadir}")
     print(f"   dataset: {dataset}")
 
     fn = os.path.join(datadir, "cache.pt")
@@ -94,7 +94,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="unit test")
     parser.add_argument(
-        "--datadir",
+        "--data_dir",
         type=str,
         default="./data/etf",
         help="location of the dataset",

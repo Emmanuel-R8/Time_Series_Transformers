@@ -13,7 +13,7 @@ class StoreDictKeyPair(argparse.Action):
 parser = argparse.ArgumentParser(
     description="PyTorch Lightning TransformerXL Model")
 parser.add_argument(
-    "--datadir", type=str, default="./data/etf",
+    "--data_dir", type=str, default="./data/etf",
     help="location of the data time_series"
 )
 parser.add_argument("--n_layer", type=int, default=12,

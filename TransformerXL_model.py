@@ -26,8 +26,9 @@ from utils.argparsing import parser
 
 
 class GlobalState():
-    def __init__(self, data: pd.DataFrame):
-        self.datadir = "./data/etf"
+    def __init__(self, data):
+        self.data_dir = "./data/etf"
+        self.data_pickle = "allData.pickle"
 
         # dimensionality of the model's hidden states'
         # depth of the model = no. of series = n_series
@@ -44,26 +45,37 @@ class GlobalState():
 
         # Dimensionality of the embeddings
         self.d_pos_embed = 20
-        self.n_model = 500  # model dimension. Must be even.
+
+        # model dimension. Must be even.
+        self.n_model = 500
+
         self.d_inner = 1000
         self.n_train = 12
         self.n_val = 2
         self.n_test = 2
-        self.n_batch = 60  # batch size"
+
+        # batch size"
+        self.n_batch = 60
         self.batch_chunk = 1
         self.not_tied = False
         self.pre_lnorm = False
         self.dropout = 0.0
         self.dropatt = 0.0
-        self.init = "normal"  # parameter initializer to use.
+
+        # parameter initializer to use.
+        self.init = "normal"
         self.emb_init = "normal"
         self.init_range = 0.1
         self.emb_init_range = 0.01
         self.init_std = 0.02
         self.proj_init_std = 0.01
-        self.optim = "adam"  # adam, sgd, adagrad
+
+        # Choices: adam, sgd, adagrad
+        self.optim = "adam"
         self.lr = 0.00025
-        self.mom = 0.0  # momentum for sgd"
+
+        # momentum for sgd"
+        self.mom = 0.0
         self.scheduler = "cosine"
         self.warmup_step = 0
         self.decay_rate = 0.5
@@ -72,33 +84,50 @@ class GlobalState():
         self.clip_nonemb = True
         self.eta_min = 0.0
         self.patience = 0
-        self.n_predict = 10  # help="number of tokens to predict"
+
+        # number of tokens to predict
+        self.n_predict = 10
         self.eval_n_predict = 50
-        self.n_ext_ctx = 0  # help="length of the extended context"
+
+        # length of the extended context
+        self.n_ext_ctx = 0
         self.n_mems = 0
         self.varlen = False
         self.same_length = True
 
         # use the same pos embeddings after n_clamp_after
         self.n_clamp_after = -1
-        self.seed = 42,  # help="random seed"
+
+        # random seed
+        self.seed = 42
         self.max_step = 10000
         self.max_eval_steps = -1
-        self.cuda = False  # help="use CUDA"
+
+        # use CUDA
+        self.cuda = False
         self.multi_gpu = False
         self.gpu0_bsz = -1
-        self.fp16 = None  # choices=["O1", "O2", "O0"],
+
+        # choices: "O1", "O2", "O0"
+        self.fp16 = None
         self.log_interval = 200
-        self.eval_interval = 4000  # help="evaluation interval"
-        self.work_dir = "TXL_TS"  # help="experiment directory."
+
+        # evaluation interval
+        self.eval_interval = 4000
+
+        # experiment directory
+        self.work_dir = "experiments"
         self.restart = True
-        self.restart_dir = ""  # help="restart dir")
-        self.debug = True
+
+        # restart dir
+        self.restart_dir = ""
+        self.debug = False
         self.finetune_v2 = True
         self.finetune_v3 = True
         self.log_first_epochs = 0
         self.restart_from = None
         self.reset_lr = True
+
         # help="reset learning schedule to start"
         self.expand = None
         # help="Add layers to model throughout training
@@ -137,7 +166,7 @@ def update_dropatt(global_state: GlobalState, m):
 ## Dataset class
 ##
 class IterableTimeSeries(Dataset):
-    def __init__(self, global_state: GlobalState, data: pd.DataFrame,
+    def __init__(self, global_state: GlobalState, data,
                  mode="train"):
 
         # Keeps the size of a batch to start the test set
@@ -147,7 +176,7 @@ class IterableTimeSeries(Dataset):
         # TODO refactor to use exactly 2 epoch instead of 700 dates.
         self.debug = global_state.debug
         if global_state.debug:
-            actual_data = data[:700]
+            actual_data = data[0:700, :]
         else:
             actual_data = data
 
@@ -188,9 +217,9 @@ class IterableTimeSeries(Dataset):
 ##
 ## Lightning module of the model
 ##
-class Train_TransformerXL(pl.LightningModule):
+class TransformerXL_Trainer(pl.LightningModule):
     def __init__(self, global_state: GlobalState):
-        super(Train_TransformerXL, self).__init__()
+        super(TransformerXL_Trainer, self).__init__()
 
         self.global_state = global_state
 
@@ -229,15 +258,18 @@ class Train_TransformerXL(pl.LightningModule):
 
     # prepare_data() makes sure that data is available for training
     # We assume that data was downloaded, save as a pickle, NaN not changed yet.
-    # Create clean data set with NaN -> 0
+    # Create clean data set with NaN -> 0 and remove the data index
     # WARNING Change when using market indices as well as returns (cannot fill
     # NaN indices with 0)
     def prepare_data(self) -> None:
         data_set = pd.read_pickle(
-            f"{self.global_state['datadir']}/allData.pickle")
-        data_set.fillna(0, inplace=True)
+            f"{self.global_state.data_dir}/allData.pickle")
+
+        data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float64)
+        data_set = torch.tensor(data_set)
+
         data_set.to_pickle(
-            f"{self.global_state['datadir']}/allDataClean.pickle")
+            f"{self.global_state.data_dir}/allDataClean.pickle")
         return None
 
     ############################################################################
@@ -246,14 +278,70 @@ class Train_TransformerXL(pl.LightningModule):
     #
     ############################################################################
 
-    ############################################################################
     #
-    # STEP 3.1: Build a scheduler
+    # STEP 3.1: Build an optimizer
+    #
+    def build_optimizer(self, reload=False):
+        if self.global_state.optim.lower() == "sgd":
+            optimizer = optim.SGD(
+                self.model.parameters(),
+                lr=self.global_state.lr,
+                momentum=self.global_state.mom,
+            )
+        elif self.global_state.optim.lower() == "adam":
+            optimizer = optim.Adam(self.model.parameters(),
+                                   lr=self.global_state.lr)
 
-    def build_scheduler(self, optimizers):
-        optimizer, optimizer_sparse = optimizers
-        scheduler_sparse = None
+        elif self.global_state.optim.lower() == "adagrad":
+            optimizer = optim.Adagrad(
+                self.model.parameters(), lr=self.global_state.lr
+            )
+        else:
+            raise ValueError(
+                f"optimizer type {self.global_state.optim} not recognized"
+            )
 
+        if reload:
+            if self.global_state.restart_from is not None:
+                optim_name = f"optimizer_{self.global_state.restart_from}.pt"
+            else:
+                optim_name = "optimizer.pt"
+
+            optim_file_name = os.path.join(self.global_state.restart_dir,
+                                           optim_name)
+            logging(f"reloading {optim_file_name}")
+            if os.path.exists(
+                    os.path.join(self.global_state.restart_dir, optim_name)
+            ):
+                with open(
+                        os.path.join(self.global_state.restart_dir, optim_name),
+                        "rb") as optim_file:
+                    opt_state_dict = torch.load(optim_file)
+                    try:
+                        optimizer.load_state_dict(opt_state_dict)
+
+                    # in case the optimizer param groups aren't the same shape,
+                    # merge them
+                    except:
+                        logging("merging optimizer param groups")
+                        opt_state_dict["param_groups"][0]["params"] = [
+                            param
+                            for param_group in opt_state_dict["param_groups"]
+                            for param in param_group["params"]
+                        ]
+                        opt_state_dict["param_groups"] = [
+                            opt_state_dict["param_groups"][0]
+                        ]
+                        optimizer.load_state_dict(opt_state_dict)
+            else:
+                logging("Optimizer was not saved. Start from scratch.")
+
+        return optimizer
+
+    #
+    # STEP 3.2: Build a scheduler
+    #
+    def build_scheduler(self, optimizer):
         if self.global_state.scheduler == "cosine":
             # here we do not set eta_min to lr_min to be backward compatible
             # because in previous versions eta_min is default to 0
@@ -262,7 +350,7 @@ class Train_TransformerXL(pl.LightningModule):
                 optimizer,
                 self.global_state.max_step,
                 eta_min=self.global_state.eta_min,
-            )  # should use eta_min arg
+            )
 
         elif self.global_state.scheduler == "inv_sqrt":
             # originally used for Transformer (in Attention is all you need)
@@ -293,75 +381,18 @@ class Train_TransformerXL(pl.LightningModule):
 
         else:
             raise ValueError(
-                f"scheduler type {self.global_state['scheduler']} not recognized"
+                f"scheduler type {self.global_state.scheduler} not recognized"
             )
 
-        return scheduler, scheduler_sparse
+        return scheduler
 
-    ############################################################################
     #
-    # STEP 3.2: Build an optimizer
-
-    def build_optimizer(self, reload=False):
-        optimizer_sparse = None
-        if self.global_state.optim.lower() == "sgd":
-            optimizer = optim.SGD(
-                self.model.parameters(),
-                lr=self.global_state.lr,
-                momentum=self.global_state.mom,
-            )
-        elif self.global_state.optim.lower() == "adam":
-            optimizer = optim.Adam(self.model.parameters(),
-                                   lr=self.global_state.lr)
-        elif self.global_state.optim.lower() == "adagrad":
-            optimizer = optim.Adagrad(
-                self.model.parameters(), lr=self.global_state.lr
-            )
-        else:
-            raise ValueError(
-                f"optimizer type {self.global_state['optim']} not recognized"
-            )
-
-        if reload:
-            if self.global_state.restart_from is not None:
-                optim_name = f"optimizer_{self.global_state['restart_from']}.pt"
-            else:
-                optim_name = "optimizer.pt"
-            optim_file_name = os.path.join(self.global_state.restart_dir,
-                                           optim_name)
-            logging(f"reloading {optim_file_name}")
-            if os.path.exists(
-                    os.path.join(self.global_state.restart_dir, optim_name)
-            ):
-                with open(
-                        os.path.join(self.global_state.restart_dir,
-                                     optim_name), "rb"
-                ) as optim_file:
-                    opt_state_dict = torch.load(optim_file)
-                    try:
-                        optimizer.load_state_dict(opt_state_dict)
-                    # in case the optimizer param groups aren't the same shape,
-                    # merge them
-                    except:
-                        logging("merging optimizer param groups")
-                        opt_state_dict["param_groups"][0]["params"] = [
-                            param
-                            for param_group in opt_state_dict["param_groups"]
-                            for param in param_group["params"]
-                        ]
-                        opt_state_dict["param_groups"] = [
-                            opt_state_dict["param_groups"][0]
-                        ]
-                        optimizer.load_state_dict(opt_state_dict)
-            else:
-                logging("Optimizer was not saved. Start from scratch.")
-
-        return optimizer, optimizer_sparse
-
+    # STEP 3.3: Combine the two
+    #
     def configure_optimizers(self):
         optimizer = self.build_optimizer()
         scheduler = self.build_scheduler(optimizer)
-        return [optimizer], [scheduler]
+        return optimizer, scheduler
 
     ############################################################################
     #
@@ -369,15 +400,16 @@ class Train_TransformerXL(pl.LightningModule):
     #
     ############################################################################
 
-    def train_loader(self):
+    def train_dataloader(self):
+        data_set = pd.read_pickle(
+            f"{self.global_state.data_dir}/allDataClean.pickle")
         return DataLoader(
-            IterableTimeSeries(self.global_state, self.data, mode="train"),
+            IterableTimeSeries(self.global_state, data_set, mode="train"),
             batch_size=self.global_state.n_batch,
             num_workers=4 - 1,
         )
 
     def training_step(self, batch, batch_nb):
-        # REQUIRED
         x, y = batch
         y_hat = self.forward(x)
         loss = self.criteria(y_hat, y)
@@ -386,19 +418,20 @@ class Train_TransformerXL(pl.LightningModule):
 
     ############################################################################
     #
-    # STEP 5: Then validate on a validation set dataloader
+    # STEP 5: Then validate on a validation set dataloader (can be OPTIONAL)
     #
     ############################################################################
 
-    def val_loader(self):
+    def val_dataloader(self):
+        data_set = pd.read_pickle(
+            f"{self.global_state.data_dir}/allDataClean.pickle")
         return DataLoader(
-            IterableTimeSeries(self.global_state, self.data, mode="val"),
+            IterableTimeSeries(self.global_state, data_set, mode="val"),
             batch_size=self.global_state.n_batch,
             num_workers=4 - 1,
         )
 
     def validation_step(self, batch, batch_nb):
-        # OPTIONAL
         x, y = batch
         y_hat = self.forward(x)
         val_loss = self.criteria(y_hat, y)
@@ -406,7 +439,6 @@ class Train_TransformerXL(pl.LightningModule):
         return {"val_loss": val_loss}
 
     def validation_end(self, outputs):
-        # OPTIONAL
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
         return {"avg_val_loss": avg_loss}
 
@@ -416,24 +448,26 @@ class Train_TransformerXL(pl.LightningModule):
     #     return {'val_loss': avg_loss, 'log': tensorboard_logs}
 
     ############################################################################
-    ##
-    ## STEP 6: Finally test the model
-    ##
+    #
+    # STEP 6: Finally test the model
+    #
     ############################################################################
 
-    def test_loader(self):
+    def test_dataloader(self):
+        data_set = pd.read_pickle(
+            f"{self.global_state.data_dir}/allDataClean.pickle")
         return DataLoader(
-            IterableTimeSeries(self.global_state, self.data, mode="test"),
+            IterableTimeSeries(self.global_state, data_set, mode="test"),
             batch_size=self.global_state.n_batch,
             num_workers=4 - 1,
         )
 
-    # def test_step(self, batch, batch_idx):
-    #     x, y = batch
-    #     logits = self(x)
-    #     loss = F.nll_loss(logits, y)
-    #     return {'val_loss': loss}
-    #
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        logits = self(x)
+        loss = F.nll_loss(logits, y)
+        return {'val_loss': loss}
+
     # def test_epoch_end(self, outputs):
     #     avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
     #     tensorboard_logs = {'val_loss': avg_loss}
@@ -441,12 +475,12 @@ class Train_TransformerXL(pl.LightningModule):
 
 
 ################################################################################
-##
-## Checkpoint callback to save best model like keras.
-##
+#
+# Checkpoint callback to save best 3 models
+#
 checkpoint_callback = ModelCheckpoint(
-    filepath="../working",
-    save_top_k=1,
+    filepath="./data/working/etf",
+    save_top_k=3,
     verbose=True,
     monitor="avg_val_loss",
     mode="min",
