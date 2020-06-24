@@ -13,10 +13,10 @@ parser = argparse.ArgumentParser(
     description="PyTorch Transformer Language Model"
 )
 parser.add_argument(
-    "--data",
+    "--input",
     type=str,
-    default="../data/etf/allData.pickle",
-    help="location of the data file",
+    default="../input/etf/allData.pickle",
+    help="location of the input file",
 )
 parser.add_argument(
     "--split",
@@ -77,8 +77,8 @@ te_iter = corpus.get_iterator(
     n_ext_ctx=args.n_ext_ctx
 )
 
-# Load the best saved model.
-with open(os.path.join(args.work_dir, "model.pt"), "rb") as f:
+# Load the best saved transformer_model.
+with open(os.path.join(args.work_dir, "transformer_model.pt"), "rb") as f:
     model = torch.load(f)
 model = model.to(device)
 
@@ -126,7 +126,7 @@ def evaluate(eval_iter):
     return total_loss / total_len
 
 
-# Run on test data.
+# Run on test input.
 if args.split == "all":
     test_loss = evaluate(te_iter)
     valid_loss = evaluate(va_iter)

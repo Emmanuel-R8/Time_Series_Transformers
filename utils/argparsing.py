@@ -13,8 +13,8 @@ class StoreDictKeyPair(argparse.Action):
 parser = argparse.ArgumentParser(
     description="PyTorch Lightning TransformerXL Model")
 parser.add_argument(
-    "--data_dir", type=str, default="./data/etf",
-    help="location of the data time_series"
+    "--data_dir", type=str, default="./input/etf",
+    help="location of the input time_series"
 )
 parser.add_argument("--n_layer", type=int, default=12,
                     help="number of total layers")
@@ -23,7 +23,7 @@ parser.add_argument("--d_head", type=int, default=50, help="head dimension")
 parser.add_argument("--d_pos_embed", type=int, default=-1,
                     help="embedding dimension")
 parser.add_argument(
-    "--n_model", type=int, default=500, help="model dimension. Must be even."
+    "--n_model", type=int, default=500, help="transformer_model dimension. Must be even."
 )
 parser.add_argument("--d_inner", type=int, default=1000,
                     help="inner dimension in FF")
@@ -232,7 +232,7 @@ parser.add_argument(
     "--expand",
     type=str,
     default=None,
-    help="Add layers to model throughout training.",
+    help="Add layers to transformer_model throughout training.",
     choices=["repeat", "reinit", "repeat_bottom", "reinit_bottom", "duplicate"],
 )
 parser.add_argument(
@@ -260,7 +260,7 @@ parser.add_argument(
     "--widen",
     type=str,
     default=None,
-    help="widen the model throughout training.",
+    help="widen the transformer_model throughout training.",
     choices=["reinit", "duplicate"],
 )
 parser.add_argument(

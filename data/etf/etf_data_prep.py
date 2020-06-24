@@ -8,7 +8,7 @@ import datetime as dt
 import dateutil as du
 
 # %%
-# WARNING Make sure that the working directory is where you want the data files!!
+# WARNING Make sure that the working directory is where you want the input files!!
 dataDirETF = "."
 dataDirIndicators = "."
 
@@ -29,7 +29,7 @@ for f in os.listdir(dataDirETF):
 
         seriesName = f[0:-4]
 
-        # Import the data and sets 'Date' as the index
+        # Import the input and sets 'Date' as the index
         df = pd.read_csv(f"{dataDirETF}/{f}")
         df["Date"] = pd.to_datetime(df["Date"], yearfirst=True)
         df.set_index("Date")
@@ -39,7 +39,7 @@ for f in os.listdir(dataDirETF):
             minDate = df["Date"][0]
             minSeries = seriesName
 
-        # Change the data to the changes day-to-day changes (in that order!):
+        # Change the input to the changes day-to-day changes (in that order!):
         #    high/low  as log-change compared to the current day's close
         #    open/close as log-change compared to the previous day's close
         #    volume changed to log(volume)
@@ -55,7 +55,7 @@ for f in os.listdir(dataDirETF):
         # Remove Adj Close
         df = df[["Date", "Open", "High", "Low", "Close", "Volume"]]
 
-        # rename the data
+        # rename the input
         df = df.rename(
             columns={
                 "Open"  : f"{seriesName}.Open",

@@ -9,19 +9,19 @@ from pytorch_lightning.loggers import TestTubeLogger
 
 from TransformerXL_model import TransformerXL_Trainer, GlobalState
 
-# %% Load data to determiine the number of series
+# %% Load input
 data_set_name = "etf"
-
 data_set = pd.read_pickle(f"data/{data_set_name}/allData.pickle")
 
+# Fill NA's with 0.0 and convert to tensor (although probably not necessary)
 data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float64)
 data_set = torch.tensor(data_set)
 
 # %%
-global_state = GlobalState(data=data_set)
+global_state = GlobalState(data=data_set, debug=True)
 
 # %%
-# Create a new model to be trained
+# Create a new transformer_model to be trained
 transformerxl_model = TransformerXL_Trainer(global_state)
 
 # %%
@@ -33,7 +33,8 @@ TB_logger = TestTubeLogger(
 
 # %%
 # Actual Trainer() method
-transformerxl_trainer = pl.Trainer(logger=TB_logger)
+# Avoids preliminary runs of validation before training
+transformerxl_trainer = pl.Trainer(logger=TB_logger, num_sanity_val_steps=0)
 
 # %%
 pl.seed_everything(global_state.seed)

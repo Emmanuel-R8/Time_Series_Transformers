@@ -41,13 +41,13 @@ class ProjectedSigmoid(LightningModule):
 
     def forward(self, hidden, target):
         """
-            hidden :: [len*n_batch x d_proj]
-            target :: [len*n_batch]
+            hidden :: [len*n_batch input d_proj]
+            output :: [len*n_batch]
         """
 
         if hidden.size(0) != target.size(0):
             raise RuntimeError(
-                "Input and target should have the same size " "in the batch dimension."
+                "Input and output should have the same size " "in the batch dimension."
             )
 
         logit = self._compute_logit(

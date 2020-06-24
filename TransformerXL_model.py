@@ -28,50 +28,56 @@ from utils.argparsing import parser
 
 
 class GlobalState:
-    def __init__(self, data):
+    def __init__(self, data, debug=False):
         self.data_dir = "./data/etf"
         self.data_pickle = "allData.pickle"
 
-        # dimensionality of the model's hidden states'
-        # depth of the model = no. of series = n_series
+        # Debug
+        self.debug = debug
+
+        # dimensionality of the transformer_model's hidden states'
+        # depth of the transformer_model = no. of series = n_series
         self.d_model = data.shape[1]
 
         self.adapt_inp = False
-        self.n_layer = 12
+        self.n_layer = 2 if debug == True else 4
 
         # number of attention heads for each attention layer in the Transformer
         # encoder
-        self.n_head = 10
+        self.n_head = 2 if debug == True else 8
 
-        # dimensionality of the model's heads
-        self.d_head = 50
+        # dimensionality of the transformer_model's heads
+        self.d_head = 4 if debug == True else 16
 
         # Dimensionality of the embeddings
-        self.d_pos_embed = 20
+        self.d_pos_embed = 8 if debug == True else self.d_model // 2
 
-        # model dimension. Must be even.
-        self.n_model = 500
+        # transformer_model dimension. Must be even.
+        self.n_model = 16 if debug == True else 60
 
-        self.d_inner = 1000
+        self.d_inner = 4 if debug == True else 16
         self.n_train = 12
         self.n_val = 2
         self.n_test = 2
 
         # batch size"
-        self.n_batch = 60
+        self.n_batch = 32 if debug == True else 64
         self.batch_chunk = 1
         self.not_tied = False
         self.pre_lnorm = False
         self.dropout = 0.0
         self.dropatt = 0.0
 
+        # When debugging, dataloaders will run in the main process
+        self.num_workers = 0 if debug == True else 4
+
         # number of tokens to predict
-        self.n_predict = 10
-        self.eval_n_predict = 50
+        self.n_predict = 2 if debug == True else 10
+        self.eval_n_predict = 2 if debug == True else 20
 
         # length of the extended context
-        self.n_ext_ctx = 0
-        self.n_mems = 0
+        self.n_ext_ctx = 2 if debug == True else 16
+        self.n_mems = 2 if debug == True else 64
         self.varlen = False
         self.same_length = True
 
@@ -104,7 +110,7 @@ class GlobalState:
 
         # random seed
         self.seed = 42
-        self.max_step = 10000
+        self.max_step = 4 if debug == True else 512
         self.max_eval_steps = -1
 
         # use CUDA
@@ -114,10 +120,10 @@ class GlobalState:
 
         # choices: "O1", "O2", "O0"
         self.fp16 = None
-        self.log_interval = 200
+        self.log_interval = 10 if debug == True else 200
 
         # evaluation interval
-        self.eval_interval = 4000
+        self.eval_interval = 20 if debug == True else 200
 
         # experiment directory
         self.work_dir = "experiments"
@@ -127,8 +133,6 @@ class GlobalState:
         self.restart = True
         self.restart_from = None
 
-        # Debug
-        self.debug = False
         self.finetune_v2 = True
         self.finetune_v3 = True
         self.log_first_epochs = 0
@@ -136,14 +140,18 @@ class GlobalState:
 
         # help="reset learning schedule to start"
         self.expand = None
-        # help="Add layers to model throughout training
+
+        # help="Add layers to transformer_model throughout training
         # choices=["repeat", "reinit", "repeat_bottom", "reinit_bottom", "duplicate"],
         self.integration = ""
+
         # choices=["freeze", "reverse_distil_full",
         # "reverse_distil_partial"]
         self.integration_length = 0
         self.expansion_dict = {}
-        self.widen = None  # choices=["reinit", "duplicate"]
+
+        # choices=["reinit", "duplicate"]
+        self.widen = None
         self.widen_dict = {}
 
 
@@ -173,11 +181,12 @@ def update_dropatt(global_state: GlobalState, m):
 ##
 class IterableTimeSeries(Dataset):
     def __init__(self, global_state: GlobalState, data, mode="train"):
+        super(IterableTimeSeries, self).__init__()
 
         # Keeps the size of a batch to start the test set
         self.n_batch = global_state.n_batch
 
-        # In debug mode, only use about 2 epoch of data
+        # In debug mode, only use about 2 epoch of input
         # TODO refactor to use exactly 2 epoch instead of 700 dates.
         self.debug = global_state.debug
         if global_state.debug:
@@ -193,23 +202,24 @@ class IterableTimeSeries(Dataset):
         elif mode == "test":
             start_index = global_state.n_model + global_state.n_val
 
-        # This is the actual data on which to iterate
+        # This is the actual input on which to iterate
         self.data = actual_data[start_index:, :]
 
-        # d_series is the depth of a series (how many data points per dates)
+        # d_series is the depth of a series (how many input points per dates)
         # n_series is the number of series (how many dates)
         self.n_series, self.d_series = data.shape
 
-        # Each training data point is a set of series to fill the model:
-        # One date (d_series data points) for each entry to the model, that is
+        # Each training input point is a set of series to fill the transformer_model:
+        # One date (d_series input points) for each entry to the transformer_model, that is
         # global_state.n_model
         self.n_model = global_state.n_model
 
     def __getitem__(self, index):
-        return (
-            self.data[index: index + self.n_model - 1, :],
-            self.data[index + self.n_model, :],
-        )
+        # An item is a tuple of:
+        #   - a transformer_model input being, say, 60 dates of time series
+        #   -  the following date as expected output
+        return (self.data[index: index + self.n_model, :],
+                self.data[index + self.n_model, :])
 
     def __len__(self):
         """
@@ -220,7 +230,7 @@ class IterableTimeSeries(Dataset):
 
 ################################################################################
 ##
-## Lightning module of the model
+## Lightning module of the transformer_model
 ##
 class TransformerXL_Trainer(pl.LightningModule):
     def __init__(self, global_state: GlobalState):
@@ -228,7 +238,7 @@ class TransformerXL_Trainer(pl.LightningModule):
 
         self.global_state = global_state
 
-        self.model = TransformerXL(
+        self.transformer_model = TransformerXL(
             d_model=global_state.d_model,
             n_model=global_state.n_model,
             n_head=global_state.n_head,
@@ -245,17 +255,24 @@ class TransformerXL_Trainer(pl.LightningModule):
             adapt_inp=global_state.adapt_inp,
             same_length=global_state.same_length,
             n_clamp_after=global_state.n_clamp_after,
+            debug=global_state.debug,
         )
         self.criteria = nn.CrossEntropyLoss()
 
     ############################################################################
     #
-    # STEP 1: Define the model
+    # STEP 1: Define the transformer_model
     #
     ############################################################################
 
-    def forward(self, x, y, *mems):
-        return self.model(x, y, *mems)
+    def forward(self, input, output, *mems):
+        if self.global_state.debug:
+            print(f"TransformerXL_Trainer forward:"
+                  f"    input shape: {input.shape}"
+                  f" -- output shape: {output.shape}"
+                  f" -- memory length: {len(mems)}")
+
+        return self.transformer_model(input, output, *mems)
 
     ############################################################################
     ##
@@ -263,9 +280,9 @@ class TransformerXL_Trainer(pl.LightningModule):
     ##
     ############################################################################
 
-    # prepare_data() makes sure that data is available for training
-    # We assume that data was downloaded, save as a pickle, NaN not changed yet.
-    # The data loaders will: create clean data set with NaN -> 0 and remove the data index
+    # prepare_data() makes sure that input is available for training
+    # We assume that input was downloaded, save as a pickle, NaN not changed yet.
+    # The input loaders will: create clean input set with NaN -> 0 and remove the input index
     # WARNING Change when using market indices as well as returns (cannot fill
     # NaN indices with 0)
     def prepare_data(self) -> None:
@@ -278,7 +295,7 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     ############################################################################
     #
-    # STEP 3: Configure the optimizer (how to use the data in the model)
+    # STEP 3: Configure the optimizer (how to use the input in the transformer_model)
     #
     ############################################################################
 
@@ -288,16 +305,16 @@ class TransformerXL_Trainer(pl.LightningModule):
     def build_optimizer(self, reload=False):
         if self.global_state.optim.lower() == "sgd":
             optimizer = optim.SGD(
-                self.model.parameters(),
+                self.transformer_model.parameters(),
                 lr=self.global_state.lr,
                 momentum=self.global_state.mom,
             )
         elif self.global_state.optim.lower() == "adam":
-            optimizer = optim.Adam(self.model.parameters(),
+            optimizer = optim.Adam(self.transformer_model.parameters(),
                                    lr=self.global_state.lr)
 
         elif self.global_state.optim.lower() == "adagrad":
-            optimizer = optim.Adagrad(self.model.parameters(),
+            optimizer = optim.Adagrad(self.transformer_model.parameters(),
                                       lr=self.global_state.lr)
         else:
             raise ValueError(
@@ -398,7 +415,7 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     ############################################################################
     #
-    # STEP 4: How to train the model: first a dalaloader, the how to train
+    # STEP 4: How to train the transformer_model: first a dalaloader, the how to train
     #
     ############################################################################
 
@@ -412,10 +429,10 @@ class TransformerXL_Trainer(pl.LightningModule):
         return DataLoader(
             IterableTimeSeries(self.global_state, data_set, mode="train"),
             batch_size=self.global_state.n_batch,
-            num_workers=4 - 1,
+            num_workers=self.global_state.num_workers,
         )
 
-    def training_step(self, batch, batch_nb):
+    def training_step(self, batch, batch_nb, optimizer_idx=1):
         x, y = batch
         y_hat = self.forward(x, y)
         loss = self.criteria(y_hat, y)
@@ -438,12 +455,12 @@ class TransformerXL_Trainer(pl.LightningModule):
         return DataLoader(
             IterableTimeSeries(self.global_state, data_set, mode="val"),
             batch_size=self.global_state.n_batch,
-            num_workers=4 - 1,
+            num_workers=self.global_state.num_workers,
         )
 
     def validation_step(self, batch, batch_nb):
         x, y = batch
-        y_hat = self.forward(x, y)
+        y_hat = self.forward(x, y, self.transformer_model.mems)
         val_loss = self.criteria(y_hat, y)
         val_loss = val_loss.unsqueeze(dim=-1)
         return {"val_loss": val_loss}
@@ -453,13 +470,13 @@ class TransformerXL_Trainer(pl.LightningModule):
         return {"avg_val_loss": avg_loss}
 
     # def validation_epoch_end(self, outputs):
-    #     avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
+    #     avg_loss = torch.stack([input['val_loss'] for input in outputs]).mean()
     #     tensorboard_logs = {'val_loss': avg_loss}
     #     return {'val_loss': avg_loss, 'log': tensorboard_logs}
 
     ############################################################################
     #
-    # STEP 6: Finally test the model
+    # STEP 6: Finally test the transformer_model
     #
     ############################################################################
 
@@ -473,7 +490,7 @@ class TransformerXL_Trainer(pl.LightningModule):
         return DataLoader(
             IterableTimeSeries(self.global_state, data_set, mode="test"),
             batch_size=self.global_state.n_batch,
-            num_workers=4 - 1,
+            num_workers=self.global_state.num_workers,
         )
 
     def test_step(self, batch, batch_idx):
@@ -483,7 +500,7 @@ class TransformerXL_Trainer(pl.LightningModule):
         return {"val_loss": loss}
 
     # def test_epoch_end(self, outputs):
-    #     avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
+    #     avg_loss = torch.stack([input['val_loss'] for input in outputs]).mean()
     #     tensorboard_logs = {'val_loss': avg_loss}
     #     return {'val_loss': avg_loss, 'log': tensorboard_logs}
 

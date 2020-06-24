@@ -13,8 +13,8 @@ from TransformerXL_model import TransformerXL_Trainer, GlobalState
 if __name__ == "__main__":
     args = parser.parse_args()
 
-    # %% Load data to determiine the number of series
-    dataDir = "./data/etf"
+    # %% Load input to determiine the number of series
+    dataDir = "./input/etf"
     data_set = pd.read_pickle(f"{dataDir}/allData.pickle")
     data_set.fillna(0, inplace=True)
 
@@ -27,7 +27,7 @@ if __name__ == "__main__":
         if k in gs_keys:
             global_state.__dict__[k] = v
 
-    # build a model
+    # build a transformer_model
     transformerxl_model = TransformerXL_Trainer(global_state)
     pl.seed_everything(global_state.seed)
 

@@ -13,7 +13,7 @@ class OrderedIterator():
                  device="cpu",
                  n_ext_ctx=None):
         """
-            data -- LongTensor -- the LongTensor is strictly ordered
+            input -- LongTensor -- the LongTensor is strictly ordered
         """
         self.d_batch = d_batch
         self.bptt = n_batch_per_test
@@ -29,7 +29,7 @@ class OrderedIterator():
         # Remove the very beginning of the time series - keep the most recent
         data = data.narrow(0, self.n_dates % d_batch, data.size(0))
 
-        # Evenly divide the data across the n_batch batches.
+        # Evenly divide the input across the n_batch batches.
         self.data = data.view(d_batch, -1).t().contiguous().to(device)
 
         # Number of mini-batches
@@ -96,7 +96,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--data_dir",
         type=str,
-        default="./data/etf",
+        default="./input/etf",
         help="location of the dataset",
     )
     args = parser.parse_args()
