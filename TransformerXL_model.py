@@ -72,8 +72,8 @@ class GlobalState:
         self.num_workers = 0 if debug == True else 4
 
         # number of tokens to predict
-        self.n_predict = 2 if debug == True else 10
-        self.eval_n_predict = 2 if debug == True else 20
+        self.n_predict = 3 if debug == True else 10
+        self.eval_n_predict = 5 if debug == True else 20
 
         # length of the extended context
         self.n_ext_ctx = 2 if debug == True else 16
