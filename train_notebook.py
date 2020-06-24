@@ -15,7 +15,7 @@ data_set_name = "etf"
 data_set = pd.read_pickle(f"data/{data_set_name}/allData.pickle")
 
 data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float64)
-data_set  = torch.tensor(data_set)
+data_set = torch.tensor(data_set)
 
 # %%
 global_state = GlobalState(data=data_set)
@@ -31,12 +31,10 @@ TB_logger = TestTubeLogger(
     name='transformerxl_trainer_logs'
 )
 
-#%%
+# %%
 # Actual Trainer() method
 transformerxl_trainer = pl.Trainer(logger=TB_logger)
 
 # %%
 pl.seed_everything(global_state.seed)
 transformerxl_trainer.fit(transformerxl_model)
-
-# %%

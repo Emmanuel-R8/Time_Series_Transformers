@@ -1,11 +1,12 @@
-old/
+experiments/*
+old/*
 data/enwik8
 
 .idea
 .vscode
+.spyproject
 
 scratchpad.py
 
 LM-TFM-enwik8
 __pycache__
-

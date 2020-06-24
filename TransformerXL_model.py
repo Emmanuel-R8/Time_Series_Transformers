@@ -6,11 +6,13 @@ import itertools
 from functools import partial
 import warnings
 
+import numpy as np
 import pandas as pd
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset
 
@@ -25,7 +27,7 @@ from utils.initialization import weights_init
 from utils.argparsing import parser
 
 
-class GlobalState():
+class GlobalState:
     def __init__(self, data):
         self.data_dir = "./data/etf"
         self.data_pickle = "allData.pickle"
@@ -37,7 +39,8 @@ class GlobalState():
         self.adapt_inp = False
         self.n_layer = 12
 
-        # number of attention heads for each attention layer in the Transformer encoder
+        # number of attention heads for each attention layer in the Transformer
+        # encoder
         self.n_head = 10
 
         # dimensionality of the model's heads
@@ -62,29 +65,6 @@ class GlobalState():
         self.dropout = 0.0
         self.dropatt = 0.0
 
-        # parameter initializer to use.
-        self.init = "normal"
-        self.emb_init = "normal"
-        self.init_range = 0.1
-        self.emb_init_range = 0.01
-        self.init_std = 0.02
-        self.proj_init_std = 0.01
-
-        # Choices: adam, sgd, adagrad
-        self.optim = "adam"
-        self.lr = 0.00025
-
-        # momentum for sgd"
-        self.mom = 0.0
-        self.scheduler = "cosine"
-        self.warmup_step = 0
-        self.decay_rate = 0.5
-        self.lr_min = 0.0
-        self.clip = 0.25
-        self.clip_nonemb = True
-        self.eta_min = 0.0
-        self.patience = 0
-
         # number of tokens to predict
         self.n_predict = 10
         self.eval_n_predict = 50
@@ -97,6 +77,30 @@ class GlobalState():
 
         # use the same pos embeddings after n_clamp_after
         self.n_clamp_after = -1
+
+        # parameter initializer to use.
+        self.init = "normal"
+        self.emb_init = "normal"
+        self.init_range = 0.1
+        self.emb_init_range = 0.01
+        self.init_std = 0.02
+        self.proj_init_std = 0.01
+
+        # Optimizer / Scheduler
+        # Choices: adam, sgd, adagrad
+        self.optim = "adam"
+        self.lr = 0.00025
+        self.scheduler = "cosine"
+        self.warmup_step = 0
+        self.decay_rate = 0.5
+        self.lr_min = 0.0
+        self.clip = 0.25
+        self.clip_nonemb = True
+        self.eta_min = 0.0
+        self.patience = 0
+
+        # momentum for sgd
+        self.mom = 0.0
 
         # random seed
         self.seed = 42
@@ -117,15 +121,17 @@ class GlobalState():
 
         # experiment directory
         self.work_dir = "experiments"
-        self.restart = True
 
-        # restart dir
+        # Restart
         self.restart_dir = ""
+        self.restart = True
+        self.restart_from = None
+
+        # Debug
         self.debug = False
         self.finetune_v2 = True
         self.finetune_v3 = True
         self.log_first_epochs = 0
-        self.restart_from = None
         self.reset_lr = True
 
         # help="reset learning schedule to start"
@@ -166,8 +172,7 @@ def update_dropatt(global_state: GlobalState, m):
 ## Dataset class
 ##
 class IterableTimeSeries(Dataset):
-    def __init__(self, global_state: GlobalState, data,
-                 mode="train"):
+    def __init__(self, global_state: GlobalState, data, mode="train"):
 
         # Keeps the size of a batch to start the test set
         self.n_batch = global_state.n_batch
@@ -223,22 +228,24 @@ class TransformerXL_Trainer(pl.LightningModule):
 
         self.global_state = global_state
 
-        self.model = TransformerXL(d_model=global_state.d_model,
-                                   n_model=global_state.n_model,
-                                   n_head=global_state.n_head,
-                                   d_head=global_state.d_head,
-                                   d_inner=global_state.d_inner,
-                                   n_layer=global_state.n_layer,
-                                   dropout=global_state.dropout,
-                                   dropatt=global_state.dropatt,
-                                   d_pos_embed=global_state.d_pos_embed,
-                                   pre_lnorm=global_state.pre_lnorm,
-                                   n_predict=global_state.n_predict,
-                                   n_ext_ctx=global_state.n_ext_ctx,
-                                   n_mems=global_state.n_mems,
-                                   adapt_inp=global_state.adapt_inp,
-                                   same_length=global_state.same_length,
-                                   n_clamp_after=global_state.n_clamp_after)
+        self.model = TransformerXL(
+            d_model=global_state.d_model,
+            n_model=global_state.n_model,
+            n_head=global_state.n_head,
+            d_head=global_state.d_head,
+            d_inner=global_state.d_inner,
+            n_layer=global_state.n_layer,
+            dropout=global_state.dropout,
+            dropatt=global_state.dropatt,
+            d_pos_embed=global_state.d_pos_embed,
+            pre_lnorm=global_state.pre_lnorm,
+            n_predict=global_state.n_predict,
+            n_ext_ctx=global_state.n_ext_ctx,
+            n_mems=global_state.n_mems,
+            adapt_inp=global_state.adapt_inp,
+            same_length=global_state.same_length,
+            n_clamp_after=global_state.n_clamp_after,
+        )
         self.criteria = nn.CrossEntropyLoss()
 
     ############################################################################
@@ -247,8 +254,8 @@ class TransformerXL_Trainer(pl.LightningModule):
     #
     ############################################################################
 
-    def forward(self, x):
-        return self.model(x)
+    def forward(self, x, y, *mems):
+        return self.model(x, y, *mems)
 
     ############################################################################
     ##
@@ -258,18 +265,15 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     # prepare_data() makes sure that data is available for training
     # We assume that data was downloaded, save as a pickle, NaN not changed yet.
-    # Create clean data set with NaN -> 0 and remove the data index
+    # The data loaders will: create clean data set with NaN -> 0 and remove the data index
     # WARNING Change when using market indices as well as returns (cannot fill
     # NaN indices with 0)
     def prepare_data(self) -> None:
         data_set = pd.read_pickle(
             f"{self.global_state.data_dir}/allData.pickle")
 
-        data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float64)
-        data_set = torch.tensor(data_set)
-
-        data_set.to_pickle(
-            f"{self.global_state.data_dir}/allDataClean.pickle")
+        # Does nothing.
+        data_set.to_pickle(f"{self.global_state.data_dir}/allDataClean.pickle")
         return None
 
     ############################################################################
@@ -293,13 +297,11 @@ class TransformerXL_Trainer(pl.LightningModule):
                                    lr=self.global_state.lr)
 
         elif self.global_state.optim.lower() == "adagrad":
-            optimizer = optim.Adagrad(
-                self.model.parameters(), lr=self.global_state.lr
-            )
+            optimizer = optim.Adagrad(self.model.parameters(),
+                                      lr=self.global_state.lr)
         else:
             raise ValueError(
-                f"optimizer type {self.global_state.optim} not recognized"
-            )
+                f"optimizer type {self.global_state.optim} not recognized")
 
         if reload:
             if self.global_state.restart_from is not None:
@@ -311,11 +313,11 @@ class TransformerXL_Trainer(pl.LightningModule):
                                            optim_name)
             logging(f"reloading {optim_file_name}")
             if os.path.exists(
-                    os.path.join(self.global_state.restart_dir, optim_name)
-            ):
+                    os.path.join(self.global_state.restart_dir, optim_name)):
                 with open(
                         os.path.join(self.global_state.restart_dir, optim_name),
-                        "rb") as optim_file:
+                        "rb"
+                ) as optim_file:
                     opt_state_dict = torch.load(optim_file)
                     try:
                         optimizer.load_state_dict(opt_state_dict)
@@ -402,7 +404,11 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     def train_dataloader(self):
         data_set = pd.read_pickle(
-            f"{self.global_state.data_dir}/allDataClean.pickle")
+            f"{self.global_state.data_dir}/allData.pickle")
+
+        data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float64)
+        data_set = torch.tensor(data_set)
+
         return DataLoader(
             IterableTimeSeries(self.global_state, data_set, mode="train"),
             batch_size=self.global_state.n_batch,
@@ -411,7 +417,7 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     def training_step(self, batch, batch_nb):
         x, y = batch
-        y_hat = self.forward(x)
+        y_hat = self.forward(x, y)
         loss = self.criteria(y_hat, y)
         loss = loss.unsqueeze(dim=-1)
         return {"loss": loss}
@@ -424,7 +430,11 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     def val_dataloader(self):
         data_set = pd.read_pickle(
-            f"{self.global_state.data_dir}/allDataClean.pickle")
+            f"{self.global_state.data_dir}/allData.pickle")
+
+        data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float64)
+        data_set = torch.tensor(data_set)
+
         return DataLoader(
             IterableTimeSeries(self.global_state, data_set, mode="val"),
             batch_size=self.global_state.n_batch,
@@ -433,7 +443,7 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     def validation_step(self, batch, batch_nb):
         x, y = batch
-        y_hat = self.forward(x)
+        y_hat = self.forward(x, y)
         val_loss = self.criteria(y_hat, y)
         val_loss = val_loss.unsqueeze(dim=-1)
         return {"val_loss": val_loss}
@@ -455,7 +465,11 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     def test_dataloader(self):
         data_set = pd.read_pickle(
-            f"{self.global_state.data_dir}/allDataClean.pickle")
+            f"{self.global_state.data_dir}/allData.pickle")
+
+        data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float64)
+        data_set = torch.tensor(data_set)
+
         return DataLoader(
             IterableTimeSeries(self.global_state, data_set, mode="test"),
             batch_size=self.global_state.n_batch,
@@ -466,7 +480,7 @@ class TransformerXL_Trainer(pl.LightningModule):
         x, y = batch
         logits = self(x)
         loss = F.nll_loss(logits, y)
-        return {'val_loss': loss}
+        return {"val_loss": loss}
 
     # def test_epoch_end(self, outputs):
     #     avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()

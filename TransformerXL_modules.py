@@ -713,7 +713,10 @@ class TransformerXL(LightningModule):
         self.n_layer = n_layer
 
         self.n_predict = n_predict
+
         self.n_mems = n_mems
+        self.mems = None  # Memories are all empty before training
+
         self.n_ext_ctx = n_ext_ctx
         self.max_n_keys = n_predict + n_ext_ctx + n_mems
 
@@ -761,25 +764,23 @@ class TransformerXL(LightningModule):
 
     def init_mems(self):
         if self.n_mems > 0:
-            mems = []
+            self.mems = []
             param = next(self.parameters())
             for i in range(self.n_layer + 1):
                 empty = torch.empty(0, dtype=param.dtype, device=param.device)
-                mems.append(empty)
+                self.mems.append(empty)
 
-            return mems
-        else:
-            return None
+        return None
 
     def _update_mems(self, hids, mems, qlen, mlen):
         # does not deal with None
-        if mems is None:
+        if self.mems is None:
             return None
 
         # mems is not None
         assert len(hids) == len(
-            mems
-        ), "len(hids) != len(mems) ({len(hids)} != {len(mems)})"
+            self.mems
+        ), "len(hids) != len(self.mems) ({len(hids)} != {len(mems)})"
 
         # There are `mlen + qlen` steps that can be cached into mems
         # For the next step, the last `n_ext_ctx` of the `qlen` tokens
@@ -791,8 +792,10 @@ class TransformerXL(LightningModule):
             end_idx = mlen + max(0, qlen - 0 - self.n_ext_ctx)
             beg_idx = max(0, end_idx - self.n_mems)
             for i in range(len(hids)):
-                cat = torch.cat([mems[i], hids[i]], dim=0)
+                cat = torch.cat([self.mems[i], hids[i]], dim=0)
                 new_mems.append(cat[beg_idx:end_idx].detach())
+
+            self.mems = new_mems
 
         return new_mems
 
@@ -801,7 +804,7 @@ class TransformerXL(LightningModule):
 
         word_emb = self.word_emb(dec_inp)
 
-        mlen = mems[0].size(0) if mems is not None else 0
+        mlen = self.mems[0].size(0) if mems is not None else 0
         klen = mlen + qlen
         if self.same_length:
             all_ones = word_emb.new_ones(qlen, klen)
