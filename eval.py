@@ -6,8 +6,8 @@ import os
 
 import torch
 
-from data_utils import get_time_series
-from utils.exp_utils import get_logger
+from utils.utils import get_time_series
+from utils.utils import get_logger
 
 parser = argparse.ArgumentParser(
     description="PyTorch Transformer Language Model"

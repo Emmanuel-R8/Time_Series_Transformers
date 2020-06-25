@@ -1,4 +1,3 @@
-import math
 from typing import *
 
 import torch
@@ -7,9 +6,9 @@ import torch.nn.functional as F
 
 from pytorch_lightning.core.lightning import LightningModule
 
-from utils.proj_sigmoid import ProjectedSigmoid
+from utils.utils import ProjectedSigmoid
 
-import data_utils
+from utils import utils
 
 
 class PositionalEmbedding(LightningModule):
@@ -1010,8 +1009,8 @@ if __name__ == "__main__":
     args.d_model = 10000
 
     data = torch.LongTensor(data_len * B).random_(0, args.d_model).to(device)
-    diter = data_utils.OrderedIterator(data, B, n_predict, device=device,
-                                       n_ext_ctx=n_ext_ctx)
+    diter = utils.OrderedIterator(data, B, n_predict, device=device,
+                                  n_ext_ctx=n_ext_ctx)
 
     for d_pos_embed in [200, 100]:
         model = TransformerXL(args.d_model, args.n_model, args.n_head,

@@ -1,6 +1,6 @@
 # coding: utf-8
 
-from utils.argparsing import parser
+from utils.utils import parser
 import pandas as pd
 import pytorch_lightning as pl
 

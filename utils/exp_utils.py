@@ -4,13 +4,12 @@ import os, shutil
 import torch
 
 
-def logging(s, log_path, print_=True, log_=True):
+def logging(s, log_path = "experiments/current.log", print_=True, log_=True):
     if print_:
         print(s)
     if log_:
         with open(log_path, "a+") as f_log:
             f_log.write(s + "\n")
-
 
 def get_logger(log_path, **kwargs):
     return functools.partial(logging, log_path=log_path, **kwargs)

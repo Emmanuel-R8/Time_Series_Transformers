@@ -1,10 +1,6 @@
 # coding: utf-8
 
-import os
-
-import itertools
-from functools import partial
-import warnings
+import os, inspect
 
 import numpy as np
 import pandas as pd
@@ -21,141 +17,8 @@ from pytorch_lightning.callbacks import ModelCheckpoint
 
 from TXL_modules import Transformer_XL
 
-from utils.exp_utils import create_exp_dir, logging
-from utils.initialization import weights_init
-
-from utils.argparsing import parser
-
-
-class GlobalState:
-    def __init__(self, data, debug=False):
-        self.data_dir = "./data/etf"
-        self.data_pickle = "allData.pickle"
-
-        # Debug
-        self.debug = debug
-
-        # dimensionality of the transformer_model's hidden states'
-        # depth of the transformer_model = no. of series = n_series
-        self.d_model = data.shape[1]
-
-        self.adapt_inp = False
-        self.n_layer = 2 if debug == True else 4
-
-        # number of attention heads for each attention layer in the Transformer
-        # encoder
-        self.n_head = 2 if debug == True else 8
-
-        # dimensionality of the transformer_model's heads
-        self.d_head = 4 if debug == True else 16
-
-        # dimensionality of the hidden states
-        self.d_hidden = 8 if debug == True else 16
-
-        # Dimensionality of the embeddings
-        self.d_pos_enc = 8 if debug == True else self.d_model // 2
-
-        # transformer_model dimension. Must be even.
-        self.n_model = 16 if debug == True else 60
-
-        self.d_FF_inner = 4 if debug == True else 16
-        self.n_train = 12
-        self.n_val = 2
-        self.n_test = 2
-
-        # batch size"
-        self.n_batch = 32 if debug == True else 64
-        self.batch_chunk = 1
-        self.not_tied = False
-        self.pre_lnorm = False
-        self.dropout = 0.0
-        self.dropatt = 0.0
-
-        # When debugging, dataloaders will run in the main process
-        self.num_workers = 0 if debug == True else 4
-
-        # number of tokens to predict
-        self.n_predict = 3 if debug == True else 10
-        self.eval_n_predict = 5 if debug == True else 20
-
-        # length of the extended context
-        self.n_ext_ctx = 2 if debug == True else 16
-        self.n_mems = 2 if debug == True else 64
-        self.varlen = False
-        self.same_length = True
-
-        # use the same pos embeddings after n_clamp_after
-        self.n_clamp_after = -1
-
-        # parameter initializer to use.
-        self.init = "normal"
-        self.emb_init = "normal"
-        self.init_range = 0.1
-        self.emb_init_range = 0.01
-        self.init_std = 0.02
-        self.proj_init_std = 0.01
-
-        # Optimizer / Scheduler
-        # Choices: adam, sgd, adagrad
-        self.optim = "adam"
-        self.lr = 0.00025
-        self.scheduler = "cosine"
-        self.warmup_step = 0
-        self.decay_rate = 0.5
-        self.lr_min = 0.0
-        self.clip = 0.25
-        self.clip_nonemb = True
-        self.eta_min = 0.0
-        self.patience = 0
-
-        # momentum for sgd
-        self.mom = 0.0
-
-        # random seed
-        self.seed = 42
-        self.max_step = 4 if debug == True else 512
-        self.max_eval_steps = -1
-
-        # use CUDA
-        self.cuda = False
-        self.multi_gpu = False
-        self.gpu0_bsz = -1
-
-        # choices: "O1", "O2", "O0"
-        self.fp16 = None
-        self.log_interval = 10 if debug == True else 200
-
-        # evaluation interval
-        self.eval_interval = 20 if debug == True else 200
-
-        # experiment directory
-        self.work_dir = "experiments"
-
-        # Restart
-        self.restart_dir = ""
-        self.restart = True
-        self.restart_from = None
-
-        self.finetune_v2 = True
-        self.finetune_v3 = True
-        self.log_first_epochs = 0
-        self.reset_lr = True
-
-        # help="reset learning schedule to start"
-        self.expand = None
-
-        # help="Add layers to transformer_model throughout training
-        # choices=["repeat", "reinit", "repeat_bottom", "reinit_bottom", "duplicate"],
-        self.integration = ""
-
-        # choices=["freeze", "reverse_distil_full",
-        # "reverse_distil_partial"]
-        self.integration_length = 0
-        self.expansion_dict = {}
-
-        # choices=["reinit", "duplicate"]
-        self.widen = None
-        self.widen_dict = {}
+from utils.exp_utils import logging
+from utils.utils import GlobalState
 
 
 ###############################################################################
@@ -168,14 +31,14 @@ def update_dropout(global_state: GlobalState, m):
         if hasattr(m, "p"):
             m.p = global_state.dropout
     if hasattr(m, "dropout_p"):
-        m.dropout_p = global_state.dropatt
+        m.dropout_p = global_state.dropout_attn
 
 
 def update_dropatt(global_state: GlobalState, m):
     if hasattr(m, "dropatt"):
-        m.dropatt.p = global_state.dropatt
+        m.dropout_attn.p = global_state.dropout_attn
     if hasattr(m, "dropatt_p"):
-        m.dropatt_p = global_state.dropatt
+        m.dropatt_p = global_state.dropout_attn
 
 
 ################################################################################
@@ -241,26 +104,18 @@ class TransformerXL_Trainer(pl.LightningModule):
 
         self.global_state = global_state
 
-        self.transformer_model = Transformer_XL(
-            n_layer=global_state.n_layer,
-            d_hidden=global_state.d_hidden,
-            d_pos_enc=global_state.d_pos_enc,
-            n_head=global_state.n_head,
-            d_head=global_state.d_head,
-            d_FF_inner=global_state.d_FF_inner,
-            d_model=global_state.d_model,
-            n_model=global_state.n_model,
-            dropout=global_state.dropout,
-            dropatt=global_state.dropatt,
-            pre_lnorm=global_state.pre_lnorm,
-            n_predict=global_state.n_predict,
-            n_ext_ctx=global_state.n_ext_ctx,
-            n_mems=global_state.n_mems,
-            adapt_inp=global_state.adapt_inp,
-            same_length=global_state.same_length,
-            n_clamp_after=global_state.n_clamp_after,
-            debug=global_state.debug,
-        )
+        self.transformer_model = Transformer_XL(n_layer=global_state.n_layer,
+                                                d_hidden=global_state.d_hidden,
+                                                d_pos_enc=global_state.d_pos_enc,
+                                                n_head=global_state.n_head,
+                                                d_head=global_state.d_head,
+                                                d_FF_inner=global_state.d_FF_inner,
+                                                d_model=global_state.d_model,
+                                                dropout=global_state.dropout,
+                                                dropout_attn=global_state.dropout_attn,
+                                                n_model=global_state.n_model,
+                                                n_mems=global_state.n_mems,
+                                                debug=global_state.debug)
         self.criteria = nn.CrossEntropyLoss()
 
     ############################################################################
@@ -269,12 +124,22 @@ class TransformerXL_Trainer(pl.LightningModule):
     #
     ############################################################################
 
-    def forward(self, input, output, *mems):
+    def forward(self, input: torch.FloatTensor, output: torch.FloatTensor,
+                *mems):
         if self.global_state.debug:
-            print(f"TransformerXL_Trainer forward:"
-                  f"    input shape: {input.shape}"
-                  f" -- output shape: {output.shape}"
-                  f" -- memory length: {len(mems)}")
+            logging(f"")
+            logging(f"")
+            logging(f"########################################################")
+            logging(f"")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" input: {input.size()}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" output: {output.size()}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" mems: {len(mems)}")
 
         return self.transformer_model(input, output, *mems)
 
@@ -427,7 +292,7 @@ class TransformerXL_Trainer(pl.LightningModule):
         data_set = pd.read_pickle(
             f"{self.global_state.data_dir}/allData.pickle")
 
-        data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float64)
+        data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float32)
         data_set = torch.tensor(data_set)
 
         return DataLoader(
@@ -453,7 +318,7 @@ class TransformerXL_Trainer(pl.LightningModule):
         data_set = pd.read_pickle(
             f"{self.global_state.data_dir}/allData.pickle")
 
-        data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float64)
+        data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float32)
         data_set = torch.tensor(data_set)
 
         return DataLoader(
@@ -488,7 +353,7 @@ class TransformerXL_Trainer(pl.LightningModule):
         data_set = pd.read_pickle(
             f"{self.global_state.data_dir}/allData.pickle")
 
-        data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float64)
+        data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float32)
         data_set = torch.tensor(data_set)
 
         return DataLoader(

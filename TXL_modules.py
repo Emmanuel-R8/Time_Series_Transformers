@@ -1,11 +1,14 @@
+import sys
+import inspect
+
 from typing import *
 
 import torch
 import torch.nn as nn
 
 from pytorch_lightning.core.lightning import LightningModule
-from utils.proj_sigmoid import ProjectedSigmoid
 
+from utils.exp_utils import logging
 
 class PositionEncoding(LightningModule):
     def __init__(self, d_pos_enc):
@@ -30,8 +33,10 @@ class PositionEncoding(LightningModule):
 
 class MultiHeadAttention(LightningModule):
     def __init__(self, d_input: int, d_output: int, d_pos_enc: int, n_head: int,
-                 d_head: int, dropout: float, dropout_attn: float):
+                 d_head: int, dropout: float, dropout_attn: float,
+                 debug: bool = False):
         super().__init__()
+        self.debug = debug
 
         # TODO: Relax this constraint
         assert d_input == d_output, \
@@ -89,71 +94,148 @@ class MultiHeadAttention(LightningModule):
                 ):
         """
         pos_encs: position encodings is separate to handle relative positions
-        DIMS: segment -> (n_model, self.d_input)
+        DIMS: segment -> (n_batch, n_model, d_model)
         DIMS: pos_embs -> (n_model + n_mems, self.d_input)
         DIMS: output ->  (n_model, self.d_input)
-        DIMS: u ->  (n_head, d_FF_inner)
+        DIMS: u ->  (n_head, d_head)
         """
 
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" segment: {segment.size()}")
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" pos_encs: {pos_encs.size()}")
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" memories: {memories.size()}")
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" u: {u.size()}")
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" v: {v.size()}")
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" mask: {mask.size()}")
+
+
         # length of current segment
-        n_model = segment.shape[0]
+        n_batch, n_model, d_input = segment.shape
 
         # length of memory available
         n_current_mems = memories.shape[0]
 
         n_head, d_head = self.n_head, self.d_head
 
-        # DIMS: memory_cat_input -> (n_model + n_current_mems, d_input)
-        memory_cat_input = torch.cat([memories, segment], dim=0)
+        # DIMS: memory_cat_input -> (n_current_mems + n_model, d_input)
+        memory_cat_input = torch.cat([memories, segment], dim=1)
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" memory_cat_input: {memory_cat_input.size()}")
 
-        # DIMS: input_ -> (n_model, d_input)
+
+        # DIMS: segment -> (d_batch, n_model, d_input)
         # DIMS: self.linear_q -> (d_input, n_head * d_head)
-        # DIMS: queries -> (n_model, b, n_head * d_head)
+        # DIMS: queries -> (d_batch, n_model, b, n_head * d_head)
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" linear_q: in {self.linear_q.in_features} x "
+                  f"out {self.linear_q.out_features}")
+
         queries = self.linear_q(segment)
+
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" queries: {queries.size()}")
 
         # DIMS: memory_cat_input -> (n_model + n_current_mems, d_input)
         # DIMS: self.linear_kv -> (d_input, d_head * n_head * 2)
-        # DIMS: keys -> (n_model + n_current_mems, d_head * n_head)
-        # DIMS: values -> (n_model + n_current_mems, d_head * n_head)
+        # DIMS: keys -> (d_batch, n_model + n_current_mems, d_head * n_head)
+        # DIMS: values -> (d_batch, n_model + n_current_mems, d_head * n_head)
         keys, values = torch.chunk(self.linear_kv(memory_cat_input), 2, dim=-1)
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" keys: {keys.size()}")
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" values: {values.size()}")
 
+
+        # DIMS: queries -> (d_batch, n_model, b, n_head * d_head)
+        # DIMS: u ->  (n_head, d_head)
         # DIMS: content_attn -> (n_model, n_model + n_current_mems, n_head)
         content_attn = torch.einsum(
-            "ihd,jhd->ijh",
-            ((queries.view(n_model, n_head, d_head) + u),
-             keys.view(n_model + n_current_mems, n_head, d_head)))
+            "bihd,bjhd->bijh",
+            ((queries.view(n_batch, n_model, n_head, d_head) + u),
+             keys.view(n_batch, n_model + n_current_mems, n_head, d_head)))
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" content_attn: {content_attn.size()}")
 
         # position-based attention term ((b) + (d) in the paper)
         # this attention is solely based on the position of the key/values
         # (i.e. it does not take the content of the key/values into account)
-        # (n_model, n_model + n_previous, b, n_head)
-        # (n_model + n_previous, b, n_head* d_hidden)
 
         # DIMS: pos_enc -> (n_model, d_pos_enc)
         # DIMS: self.linear_p -> (d_pos_enc, d_head * n_head)
         # DIMS: positions -> (n_model, d_head * n_head)
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" linear_p: in {self.linear_p.in_features} x "
+                  f"out {self.linear_p.out_features}")
+
         positions = self.linear_p(pos_encs)
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" positions: {positions.size()}")
 
         # DIMS: position_attn -> (n_model, n_model + n_current_mems, n_head)
         position_attn = torch.einsum(
-            "ihd,jhd->ijh",
-            ((queries.view(n_model, n_head, d_head) + v),
+            "bihd,jhd->bijh",
+            ((queries.view(n_batch, n_model, n_head, d_head) + v),
              positions.view(n_model + n_current_mems, n_head, d_head)))
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" position_attn: {position_attn.size()}")
 
         # Compute positional attention efficiently
         # DIMS: position_attn -> (n_model, n_model + n_current_mems, n_head)
         position_attn = self._rel_shift(position_attn)
 
         # the attention is the sum of content-based and position-based attention
-        # DIMS: attn -> (n_model, n_model + n_current_mems, n_head)
+        # DIMS: attn -> (n_batch, n_model, n_model + n_current_mems, n_head)
         attn = content_attn + position_attn
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" attn: {attn.size()}")
 
         if mask is not None and mask.any().item():
-            attn = attn.masked_fill(
-                mask[..., None], -float('inf'))
+            padded_mask =mask[None, :, :, :]
+            if self.debug:
+                logging(f"{self.__class__.__name__}, "
+                      f"{inspect.currentframe().f_code.co_name}: "
+                      f" padded_mask: {padded_mask.size()}")
+
+            attn = attn.masked_fill(padded_mask, -float('inf'))
+            if self.debug:
+                logging(f"{self.__class__.__name__}, "
+                      f"{inspect.currentframe().f_code.co_name}: "
+                      f" attn: {attn.size()}")
 
         # rescale to prevent values from exploding
         # normalize across the value sequence dimension
+        # TODO change softmax
         attn = torch.softmax(attn * self.scale, dim=1)
         attn = self.dropout_attn(attn)
 
@@ -167,10 +249,14 @@ class MultiHeadAttention(LightningModule):
         # DIMS: einsum -> (n_model, n_head, d_head)
         # DIMS: attn_weighted_values -> (n_model, n_head* d_head)
         attn_weighted_values = torch.einsum(
-            "ijh,jhd->ihd",
-            (attn, values.view(n_model + n_current_mems, n_head, d_head),)) \
+            "bijh,bjhd->bihd",
+            (attn, values.view(n_batch, n_model + n_current_mems, n_head, d_head),)) \
             .contiguous() \
-            .view(n_model, n_head * d_head)
+            .view(n_batch, n_model, n_head * d_head)
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" attn_weighted_values: {attn_weighted_values.size()}")
 
         # Project back to input dimension and add residual connection
         # DIMS: self.layer_out() -> (d_head * n_head, d_output)
@@ -179,6 +265,9 @@ class MultiHeadAttention(LightningModule):
         # DIMS: segment -> (n_model, self.d_input)
         output = segment + self.dropout(self.layer_out(attn_weighted_values))
         output = self.norm_out(output)
+        if self.debug:
+            logging(f"{self.__class__.__name__}, forward: "
+                  f"    output: {output.size()}")
 
         return output
 
@@ -209,15 +298,18 @@ class Positionwise_FeedFwd(LightningModule):
 
 
 class DecoderBlock(LightningModule):
-    def __init__(self, n_head, d_input, d_output, d_head_inner, d_FF_inner,
-                 dropout=0.0, dropout_attn=0.0):
+    def __init__(self, n_head: int, d_input: int, d_output: int, d_pos_enc: int,
+                 d_head_inner: int, d_FF_inner: int, dropout: float = 0.0,
+                 dropout_attn: float = 0.0, debug: bool = False):
         super().__init__()
+        self.debug = debug
 
         self.multi_heat_attn = MultiHeadAttention(d_input, d_output, d_pos_enc,
                                                   n_head=n_head,
                                                   d_head=d_head_inner,
                                                   dropout=dropout,
-                                                  dropout_attn=dropout_attn)
+                                                  dropout_attn=dropout_attn,
+                                                  debug=debug)
         self.feed_fwd = Positionwise_FeedFwd(d_input, d_FF_inner, dropout)
 
     def forward(self, input_: torch.FloatTensor,  # (cur_seq, bs, d_input)
@@ -234,8 +326,10 @@ class DecoderBlock(LightningModule):
 class Transformer_XL(LightningModule):
     def __init__(self, n_layer: int, d_hidden, d_pos_enc, n_head: int,
                  d_head: int, d_FF_inner: int, d_model: int, dropout: float,
-                 dropout_attn: float, n_model: int, n_mems: int):
+                 dropout_attn: float, n_model: int, n_mems: int,
+                 debug: bool = False):
         super().__init__()
+        self.debug = debug
 
         self.n_layer = n_layer
         self.n_head, self.d_head, self.d_ff_inner = n_head, d_head, d_FF_inner
@@ -256,11 +350,11 @@ class Transformer_XL(LightningModule):
             input_size = d_model if l == 0 else d_hidden
             output_size = d_model if l == n_layer - 1 else d_hidden
 
-            self.layers.append(DecoderBlock(n_head, input_size, output_size,
-                                            d_head_inner=d_head,
-                                            d_FF_inner=d_FF_inner,
-                                            dropout=dropout,
-                                            dropout_attn=dropout_attn))
+            self.layers.append(
+                DecoderBlock(n_head, input_size, output_size, d_pos_enc,
+                             d_head_inner=d_head, d_FF_inner=d_FF_inner,
+                             dropout=dropout, dropout_attn=dropout_attn,
+                             debug=debug))
 
         self.loss_fn = nn.CrossEntropyLoss()
 
@@ -307,22 +401,42 @@ class Transformer_XL(LightningModule):
                 target: torch.FloatTensor,  # (n_model, bs)
                 memory: Optional[List[torch.FloatTensor]] = None,
                 ) -> Dict[str, torch.Tensor]:
-        # DIMS: data -> (n_model, d_model)
+        # DIMS: data -> (n_batch, n_model, d_model)
         # DIMS: target -> (n_model, d_model)
+
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" data: {data.size()}")
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" target: {target.size()}")
+
 
         if memory is None:
             memory: List[torch.FloatTensor] = self.init_memory(data.device)
 
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" memory: {len(memory)}")
+
+
         assert len(memory) == len(self.layers) + 1
 
-        n_sequence, n_batch = data.size()
+        n_batch, n_sequence, d_sequence = data.size()
         prev_seq = memory[0].size(0)
 
         # Construct attention mask
         dec_attn_mask = torch.triu(
             torch.ones((n_sequence, n_sequence + prev_seq)),
             diagonal=1 + prev_seq,
-        ).byte()[..., None].to(data.device)
+        ).bool()[..., None].to(data.device)
+
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" dec_attn_mask: {dec_attn_mask.size()}")
 
         current_segment = self.dropout(data)
 
@@ -339,6 +453,11 @@ class Transformer_XL(LightningModule):
             hidden_states.append(layer_out)
 
         layer_out = self.dropout(layer_out)
+        if self.debug:
+            logging(f"{self.__class__.__name__}, "
+                  f"{inspect.currentframe().f_code.co_name}: "
+                  f" layer_out: {layer_out.size()}")
+
         loss = self.loss_fn(layer_out.view(-1, layer_out.size(-1)),
                             target.view(-1))
 
