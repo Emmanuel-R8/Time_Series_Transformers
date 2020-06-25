@@ -4,7 +4,7 @@ import os, shutil
 import torch
 
 
-def logging(s, log_path = "experiments/current.log", print_=True, log_=True):
+def logging(s, log_path = "experiments/current.log", print_=False, log_=True):
     if print_:
         print(s)
     if log_:

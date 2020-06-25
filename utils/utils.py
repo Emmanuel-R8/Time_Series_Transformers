@@ -92,6 +92,8 @@ class GlobalState:
 
         # Debug
         self.debug = debug
+        # If debug is on, do not debug those functions
+        self.skip_debug = ['MultiHeadAttention']
 
         # dimensionality of the transformer_model's hidden states'
         # depth of the transformer_model = no. of series = n_series
@@ -117,9 +119,11 @@ class GlobalState:
         self.n_model = 13 if debug == True else 60
 
         self.d_FF_inner = 4 if debug == True else 16
+
+        # TODO: Check that n_train is actually used
         self.n_train = 12
-        self.n_val = 2
-        self.n_test = 2
+        self.n_val = 6 if debug == True else 12
+        self.n_test = 9 if debug == True else 12
 
         # batch size"
         self.n_batch = 19 if debug == True else 64
@@ -130,7 +134,7 @@ class GlobalState:
         self.dropout_attn = 0.0
 
         # When debugging, dataloaders will run in the main process
-        self.num_workers = 0 if debug == True else 4
+        self.num_workers = 4 if debug == True else 4
 
         # number of tokens to predict
         self.n_predict = 3 if debug == True else 10
@@ -157,10 +161,12 @@ class GlobalState:
         # Choices: adam, sgd, adagrad
         self.optim = "adam"
         self.lr = 0.00025
-        self.scheduler = "cosine"
+
+        # Choices: cosine, inv_sqrt, dev_perf, constant
+        self.scheduler = "dev_perf"
         self.warmup_step = 0
         self.decay_rate = 0.5
-        self.lr_min = 0.0
+        self.min_lr = 0.0
         self.clip = 0.25
         self.clip_nonemb = True
         self.eta_min = 0.0

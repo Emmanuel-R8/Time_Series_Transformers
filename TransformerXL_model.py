@@ -258,7 +258,7 @@ class TransformerXL_Trainer(pl.LightningModule):
                 optimizer,
                 factor=self.global_state.decay_rate,
                 patience=self.global_state.patience,
-                min_lr=self.global_state.lr_min,
+                min_lr=self.global_state.min_lr,
             )
 
         elif self.global_state.scheduler == "constant":

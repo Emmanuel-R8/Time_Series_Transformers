@@ -1,6 +1,7 @@
 # coding: utf-8
 
 import os, inspect
+from typing import *
 
 import numpy as np
 import pandas as pd
@@ -46,52 +47,87 @@ def update_dropatt(global_state: GlobalState, m):
 ## Dataset class
 ##
 class IterableTimeSeries(Dataset):
-    def __init__(self, global_state: GlobalState, data, mode="train"):
+    def __init__(self, global_state: GlobalState, data, mode="train",
+                 debug=False):
         super(IterableTimeSeries, self).__init__()
 
-        # Keeps the size of a batch to start the test set
-        self.n_batch = global_state.n_batch
+        self.global_state = global_state
+        self.data_type = mode
+
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Creating dataloader for data set: {mode}")
 
         # In debug mode, only use about 2 epoch of input
         # TODO refactor to use exactly 2 epoch instead of 700 dates.
-        self.debug = global_state.debug
-        if global_state.debug:
-            actual_data = data[0:700, :]
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            total_data_set_length = min(700, data.size(0))
         else:
-            actual_data = data
+            total_data_set_length = data.size(0)
+
+        # The beginning of the data set is where 'train' starts
+        # The end of the dataset is here we find the last testing data
+        # We therefore start at 0
+        # And end at total_data_set_length = n_samples + n_val + n_test
+        n_samples = total_data_set_length - global_state.n_val \
+                    - global_state.n_test - 1
 
         # Adjust the start of the dataset for training / val / test
         if mode == "train":
             start_index = 0
+            end_index = n_samples
+
         elif mode == "val":
-            start_index = global_state.n_model
+            start_index = n_samples
+            end_index = n_samples + global_state.n_val
+
         elif mode == "test":
-            start_index = global_state.n_model + global_state.n_val
+            start_index = n_samples + global_state.n_val
+            end_index = n_samples + global_state.n_val + global_state.n_test
 
         # This is the actual input on which to iterate
-        self.data = actual_data[start_index:, :]
+        self.data = data[start_index:end_index, :]
+
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Dataset {self.data_type} - Start index: {start_index}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Dataset {self.data_type} - End index: {end_index}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Dataset {self.data_type} - data: {self.data.size()}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Dataset {self.data_type} - data set iterator length: {self.data.size()[0]}")
 
         # d_series is the depth of a series (how many input points per dates)
         # n_series is the number of series (how many dates)
-        self.n_series, self.d_series = data.shape
-
-        # Each training input point is a set of series to fill the transformer_model:
-        # One date (d_series input points) for each entry to the transformer_model, that is
-        # global_state.d_model
-        self.n_model = global_state.n_model
+        self.n_series, self.d_series = data.size()
 
     def __getitem__(self, index):
         # An item is a tuple of:
         #   - a transformer_model input being, say, 60 dates of time series
         #   -  the following date as expected output
-        return (self.data[index: index + self.n_model, :],
-                self.data[index + self.n_model, :])
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" getting item from {self.data_type} no.: {index}")
+
+        return (self.data[index: index + self.global_state.n_model, :],
+                self.data[index + self.global_state.n_model, :])
 
     def __len__(self):
         """
         Total number of samples in the dataset
         """
-        return self.n_series
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Call to __len__() on {self.data_type} returning self.data.size()[0] = {self.data.size()[0]}")
+        return self.data.size()[0]
 
 
 ################################################################################
@@ -104,19 +140,33 @@ class TransformerXL_Trainer(pl.LightningModule):
 
         self.global_state = global_state
 
-        self.transformer_model = Transformer_XL(n_layer=global_state.n_layer,
-                                                d_hidden=global_state.d_hidden,
-                                                d_pos_enc=global_state.d_pos_enc,
-                                                n_head=global_state.n_head,
-                                                d_head=global_state.d_head,
-                                                d_FF_inner=global_state.d_FF_inner,
-                                                d_model=global_state.d_model,
-                                                dropout=global_state.dropout,
-                                                dropout_attn=global_state.dropout_attn,
-                                                n_model=global_state.n_model,
-                                                n_mems=global_state.n_mems,
-                                                debug=global_state.debug)
-        self.criteria = nn.CrossEntropyLoss()
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"")
+            logging(f"")
+            logging(f"########################################################")
+            logging(f"########################################################")
+            logging(f"")
+            logging(f"    INITIALISING TRANSFORMER XL")
+            logging(f"")
+            logging(f"########################################################")
+            logging(f"########################################################")
+
+        self.transformer_model = Transformer_XL(
+            n_layer=global_state.n_layer,
+            d_hidden=global_state.d_hidden,
+            d_pos_enc=global_state.d_pos_enc,
+            n_head=global_state.n_head,
+            d_head=global_state.d_head,
+            d_FF_inner=global_state.d_FF_inner,
+            d_model=global_state.d_model,
+            dropout=global_state.dropout,
+            dropout_attn=global_state.dropout_attn,
+            n_model=global_state.n_model,
+            n_mems=global_state.n_mems,
+            debug=global_state.debug,
+            skip_debug=global_state.skip_debug)
+
+        self.loss_function = nn.MSELoss()
 
     ############################################################################
     #
@@ -126,7 +176,7 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     def forward(self, input: torch.FloatTensor, output: torch.FloatTensor,
                 *mems):
-        if self.global_state.debug:
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"")
             logging(f"")
             logging(f"########################################################")
@@ -179,7 +229,7 @@ class TransformerXL_Trainer(pl.LightningModule):
                 momentum=self.global_state.mom,
             )
         elif self.global_state.optim.lower() == "adam":
-            optimizer = optim.Adam(self.transformer_model.parameters(),
+            optimizer = optim.Adam(params=self.transformer_model.parameters(),
                                    lr=self.global_state.lr)
 
         elif self.global_state.optim.lower() == "adagrad":
@@ -258,10 +308,10 @@ class TransformerXL_Trainer(pl.LightningModule):
 
         elif self.global_state.scheduler == "dev_perf":
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
+                optimizer=optimizer,
                 factor=self.global_state.decay_rate,
                 patience=self.global_state.patience,
-                min_lr=self.global_state.lr_min,
+                min_lr=self.global_state.min_lr,
             )
 
         elif self.global_state.scheduler == "constant":
@@ -279,8 +329,11 @@ class TransformerXL_Trainer(pl.LightningModule):
     #
     def configure_optimizers(self):
         optimizer = self.build_optimizer()
-        scheduler = self.build_scheduler(optimizer)
-        return optimizer, scheduler
+
+        # TODO: adding a scheduler throws errors. Check
+        # scheduler = self.build_scheduler(optimizer=optimizer)
+        # return optimizer, scheduler
+        return optimizer
 
     ############################################################################
     #
@@ -289,22 +342,65 @@ class TransformerXL_Trainer(pl.LightningModule):
     ############################################################################
 
     def train_dataloader(self):
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Creating dataloader train")
+
         data_set = pd.read_pickle(
             f"{self.global_state.data_dir}/allData.pickle")
 
         data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float32)
         data_set = torch.tensor(data_set)
 
-        return DataLoader(
+        dataloader = DataLoader(
             IterableTimeSeries(self.global_state, data_set, mode="train"),
             batch_size=self.global_state.n_batch,
-            num_workers=self.global_state.num_workers,
+            num_workers=self.global_state.num_workers, drop_last=True
         )
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Dataloader length: {len(dataloader)}")
 
-    def training_step(self, batch, batch_nb, optimizer_idx=1):
+        return dataloader
+
+    def training_step(self, batch: List[torch.Tensor], batch_idx: int,
+                      optimizer_idx: int = 1):
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" batch: {type(batch)}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" batch_nb: {batch_idx}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" optimizer_idx: {type(optimizer_idx)}")
+
+        # DIMS: batch = (x, y)
+        # DIMS: x -> (n_batch, n_model, d_model)
+        # DIMS: y -> (n_batch, d_model)
         x, y = batch
+
         y_hat = self.forward(x, y)
-        loss = self.criteria(y_hat, y)
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" y_hat['loss']: {y_hat['loss'].size()}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" y_hat['layer_out']: {y_hat['layer_out'].size()}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" y_hat['memory'][0]: {y_hat['memory'][0].size()}")
+
+        loss = self.loss_function(y_hat['layer_out'][:, -1, :], y)
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" loss: {loss.size()}")
+
         loss = loss.unsqueeze(dim=-1)
         return {"loss": loss}
 
@@ -315,22 +411,34 @@ class TransformerXL_Trainer(pl.LightningModule):
     ############################################################################
 
     def val_dataloader(self):
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Creating dataloader val")
+
         data_set = pd.read_pickle(
             f"{self.global_state.data_dir}/allData.pickle")
 
         data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float32)
         data_set = torch.tensor(data_set)
 
-        return DataLoader(
+        # Note that batches have size 1!
+        dataloader = DataLoader(
             IterableTimeSeries(self.global_state, data_set, mode="val"),
-            batch_size=self.global_state.n_batch,
-            num_workers=self.global_state.num_workers,
+            batch_size=1,
+            num_workers=self.global_state.num_workers, drop_last=True
         )
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Dataloader length: {len(dataloader)}")
+
+        return dataloader
 
     def validation_step(self, batch, batch_nb):
         x, y = batch
         y_hat = self.forward(x, y, self.transformer_model.mems)
-        val_loss = self.criteria(y_hat, y)
+        val_loss = self.loss_function(y_hat, y)
         val_loss = val_loss.unsqueeze(dim=-1)
         return {"val_loss": val_loss}
 
@@ -350,17 +458,29 @@ class TransformerXL_Trainer(pl.LightningModule):
     ############################################################################
 
     def test_dataloader(self):
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Creating dataloader train")
+
         data_set = pd.read_pickle(
             f"{self.global_state.data_dir}/allData.pickle")
 
         data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float32)
         data_set = torch.tensor(data_set)
 
-        return DataLoader(
+        # Note that batches have size 1!
+        dataloader = DataLoader(
             IterableTimeSeries(self.global_state, data_set, mode="test"),
-            batch_size=self.global_state.n_batch,
-            num_workers=self.global_state.num_workers,
+            batch_size=1,
+            num_workers=self.global_state.num_workers, drop_last=True
         )
+        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Dataloader length: {len(dataloader)}")
+
+        return dataloader
 
     def test_step(self, batch, batch_idx):
         x, y = batch
