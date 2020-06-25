@@ -1,5 +1,5 @@
 import math
-from typing import Optional
+from typing import *
 
 import torch
 import torch.nn as nn
@@ -38,57 +38,66 @@ class PositionalEmbedding(LightningModule):
 
     def forward(self, n_model):
         # torch.ger = outer product
-        # DIMS: sinusoid_inp -> n_model d_pos_embed
+        # DIMS: sinusoid_inp -> d_model d_pos_embed
         sinusoid_inp = torch.ger(n_model, self.inv_freq)
 
-        # DIMS: pos_emb -> n_model 2*d_pos_embed
+        # DIMS: pos_emb -> d_model 2*d_pos_embed
         pos_emb = torch.cat([sinusoid_inp.sin(), sinusoid_inp.cos()], dim=-1)
-
-        # DIMS: pos_emb -> n_model 1 2*d_pos_embed
-        pos_emb = pos_emb[:, None, :]
-
-        # DIMS: pos_emb -> n_model 1 2*d_pos_emb
-        # assert pos_emb.size()[0] == n_model, "pos_emb.size()[0] != n_model"
 
         if self.debug:
             print(f"PositionalEmbedding forward:"
                   f"    pos_emb size: {pos_emb.shape}")
 
-        # assert (
-        #         pos_emb.shape[2] == 2 * self.d_pos_embed
-        # ), f"pos_emb.size()[2] != 2 * self.d_pos_embed: {pos_emb.shape[2]} != 2 * {self.d_pos_embed}"
-
         return pos_emb
 
 
 class PositionwiseFF(LightningModule):
-    def __init__(self, n_model, d_inner, dropout, pre_lnorm=False, debug=False):
+    def __init__(self, n_layer, layer_idx, d_model, d_hidden, d_inner, dropout,
+                 pre_lnorm=False, debug=False):
         super(PositionwiseFF, self).__init__()
 
         self.debug = debug
 
-        self.n_model = n_model
+        self.layer_idx = layer_idx
+
+        if layer_idx == 0:
+            self.d_input = d_model
+            self.d_output = d_hidden
+        elif layer_idx == n_layer - 1:
+            self.d_input = d_hidden
+            self.d_output = d_model
+        else:
+            self.d_input = d_hidden
+            self.d_output = d_hidden
+
         self.d_inner = d_inner
         self.dropout = dropout
 
-        # DIMS: n_model x n_model
+        # DIMS: d_model x d_model
         self.CoreNet = nn.Sequential(
-            # DIMS: n_model x d_inner
-            nn.Linear(n_model, d_inner),
-            # DIMS: d_inner
+
+            # DIMS: d_model x d_output
+            nn.Linear(self.d_input, self.d_inner),
+
+            # DIMS: d_output
             nn.ReLU(inplace=True),
-            # DIMS: d_inner
+
+            # DIMS: d_output
             nn.Dropout(dropout),
-            # DIMS: d_inner x n_model
-            nn.Linear(d_inner, n_model),
-            # DIMS: n_model
+
+            # DIMS: d_output x d_model
+            nn.Linear(d_inner, self.d_output),
+
+            # DIMS: d_model
             nn.Dropout(dropout),
         )
 
-        # DIMS: n_model
-        self.layer_norm = nn.LayerNorm(n_model)
-
+        # DIMS: d_model
         self.pre_lnorm = pre_lnorm
+        if pre_lnorm:
+            self.layer_norm = nn.LayerNorm(self.d_input)
+        else:
+            self.layer_norm = nn.LayerNorm(self.d_output)
 
     def forward(self, input):
 
@@ -96,29 +105,30 @@ class PositionwiseFF(LightningModule):
             print(f"PositionalFF forward:"
                   f"    input size: {input.shape}")
 
-        # DIMS: input -> n_predict x n_batch x n_model
-        assert (
-                input.size()[2] == self.n_model
-        ), "PositionWideFF/forward: input.size()[0] != self.n_model"
+        # DIMS: input -> n_predict x d_model
+        # assert (
+        #        input.size()[1] == self.d_input
+        # ), "PositionWideFF/forward: input.size()[1] != self.d_model"
 
         if self.pre_lnorm:
             # layer normalization + positionwise feed-forward
-            # DIMS: core_out -> n_predict x n_batch x n_model
+            # DIMS: core_out -> n_predict x n_batch x d_model
             core_out = self.CoreNet(self.layer_norm(input))
 
             # residual connection
-            # DIMS: output -> n_predict x n_batch x n_model
+            # DIMS: output -> n_predict x n_batch x d_model
             output = core_out + input
         else:
             # positionwise feed-forward
-            # DIMS: core_out -> n_predict x n_batch x n_model
+            # DIMS: core_out -> n_predict x n_batch x d_model
             core_out = self.CoreNet(input)
 
             # residual connection + layer normalization
-            # DIMS: output -> n_predict x n_batch x n_model
+            # DIMS: output -> n_predict x n_batch x d_model
             output = self.layer_norm(input + core_out)
 
         return output
+
 
 
 class MultiHeadAttn(LightningModule):
@@ -131,19 +141,19 @@ class MultiHeadAttn(LightningModule):
         self.d_head = d_head
         self.dropout = dropout
 
-        # DIMS: n_model x n_head*d_head
+        # DIMS: d_model x n_head*d_head
         self.q_net = nn.Linear(n_model, n_head * d_head, bias=False)
 
-        # DIMS: n_model x 2*n_head*d_head
+        # DIMS: d_model x 2*n_head*d_head
         self.kv_net = nn.Linear(n_model, 2 * n_head * d_head, bias=False)
 
         self.dropout = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
 
-        # DIMS: n_head*d_head x n_model
+        # DIMS: n_head*d_head x d_model
         self.o_net = nn.Linear(n_head * d_head, n_model, bias=False)
 
-        # DIMS: n_model
+        # DIMS: d_model
         self.layer_norm = nn.LayerNorm(n_model)
 
         self.scale = 1 / (d_head ** 0.5)
@@ -163,10 +173,10 @@ class MultiHeadAttn(LightningModule):
             # layer normalization
             c = self.layer_norm(c)
 
-        # DIMS: q_net -> n_model x n_head * d_head
+        # DIMS: q_net -> d_model x n_head * d_head
         head_q = self.q_net(h)
 
-        # DIMS: kv_net -> n_model x 2*n_head*d_head
+        # DIMS: kv_net -> d_model x 2*n_head*d_head
         head_k, head_v = torch.chunk(self.kv_net(c), 2, -1)
 
         head_q = head_q.view(h.size(0), h.size(1), self.n_head, self.d_head)
@@ -195,7 +205,7 @@ class MultiHeadAttn(LightningModule):
         )
 
         # linear projection
-        # DIMS: n_head*d_head x n_model
+        # DIMS: n_head*d_head x d_model
         attn_out = self.o_net(attn_vec)
         attn_out = self.dropout(attn_out)
 
@@ -232,17 +242,17 @@ class RelMultiHeadAttn(LightningModule):
         self.d_head = d_head
         self.dropout = dropout
 
-        # DIMS: n_model x 3*n_head*d_head
+        # DIMS: d_model x 3*n_head*d_head
         self.qkv_net = nn.Linear(n_model, 3 * n_head * d_head, bias=False)
 
         # DIMS:
         self.dropout = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
 
-        # DIMS: n_head*d_head x n_model
+        # DIMS: n_head*d_head x d_model
         self.o_net = nn.Linear(n_head * d_head, n_model, bias=False)
 
-        # DIMS: n_model
+        # DIMS: d_model
         self.layer_norm = nn.LayerNorm(n_model)
 
         self.scale = 1 / (d_head ** 0.5)
@@ -328,7 +338,7 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
 
         self.debug = debug
 
-        # DIMS: n_model x n_head*d_head
+        # DIMS: d_model x n_head*d_head
         self.r_net = nn.Linear(self.n_model, self.n_head * self.d_head,
                                bias=False)
 
@@ -343,42 +353,42 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         qlen, rlen, bsz = w.size(0), r.size(0), w.size(1)
 
         # TODO: DIMS obtained through debugging are clearly wrong.
-        # DIMS: w -> n_batch x n_model x d_model
+        # DIMS: w -> n_batch x d_model x d_model
         # DIMS: r -> n_batch x 1 x d_pos_emb
         # DIMS: r_w_bias -> n_head x d_head
         # DIMS: r_r_bias -> n_head x d_head
         # qlen = n_batch
         # rlen = n_batch
-        # bsz = n_model
+        # bsz = d_model
 
         if mems is not None:
             # DIMS: 0 at the beginning
 
             # Concatenate memories + current segment along 1st dimension
             # TODO: CHECK mems DIMS. should reflect hidden state size
-            # DIMS: mems -> n_mem x n_model
-            # DIMS: w ->    n_batch x n_model x d_model
-            # DIMS: cat ->  (n_mem+n_model) x n_model
+            # DIMS: mems -> n_mem x d_model
+            # DIMS: w ->    n_batch x d_model x d_model
+            # DIMS: cat ->  (n_mem+d_model) x d_model
 
             # CHECK: mems has to be copied to have one per training value in
             # the batch
-            # DIMS: w -> n_batch x n_model x d_model
+            # DIMS: w -> n_batch x d_model x d_model
             # DIMS: mems -> ???
-            # DIMS: cat -> (n_batch + ???) x n_model x d_model
+            # DIMS: cat -> (n_batch + ???) x d_model x d_model
             cat = torch.cat([mems, w], 0)
             if self.pre_lnorm:
-                # DIMS: cat ->     n_predict x n_batch x n_model
-                # DIMS: qkc_net -> n_model x 3*n_head*d_head
+                # DIMS: cat ->     n_predict x n_batch x d_model
+                # DIMS: qkc_net -> d_model x 3*n_head*d_head
                 # DIMS: w_heads -> (n_predict + ???) x n_batch x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(cat))
             else:
-                # DIMS: cat ->     n_predict x n_batch x n_model
-                # DIMS: qkc_net -> n_model x 3*n_head*d_head
+                # DIMS: cat ->     n_predict x n_batch x d_model
+                # DIMS: qkc_net -> d_model x 3*n_head*d_head
                 # DIMS: w_heads -> (n_predict + ???) x n_batch x 3*n_head*d_head
                 w_heads = self.qkv_net(cat)
 
-            # DIMS: r -> n_predict x 1 x n_model
-            # DIMS: r_net -> n_model x n_head*d_head
+            # DIMS: r -> n_predict x 1 x d_model
+            # DIMS: r_net -> d_model x n_head*d_head
             # DIMS: r_head_k -> n_predict x n_head x d_head
             r_head_k = self.r_net(r)
 
@@ -392,18 +402,18 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
             w_head_q = w_head_q[-qlen:]
         else:
             if self.pre_lnorm:
-                # DIMS: w -> n_predict x n_batch x n_model
-                # DIMS: qkv_net -> n_model x 3*n_head*d_head
+                # DIMS: w -> n_predict x n_batch x d_model
+                # DIMS: qkv_net -> d_model x 3*n_head*d_head
                 # DIMS: w_heads -> n_predict x n_batch x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(w))
             else:
-                # DIMS: w -> n_batch x n_model x d_model
-                # DIMS: qkv_net -> n_model x 3*n_head*d_head
+                # DIMS: w -> n_batch x d_model x d_model
+                # DIMS: qkv_net -> d_model x 3*n_head*d_head
                 # DIMS: w_heads -> n_predict x n_batch x 3*n_head*d_head
                 w_heads = self.qkv_net(w)
 
-            # DIMS: r -> n_predict x 1 x n_model
-            # DIMS: r_net -> n_model x n_head*d_head
+            # DIMS: r -> n_predict x 1 x d_model
+            # DIMS: r_net -> d_model x n_head*d_head
             # DIMS: r_head_k -> n_predict x n_head x d_head
             r_head_k = self.r_net(r)
 
@@ -482,7 +492,7 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         )
 
         # linear projection
-        # DIMS: n_head*d_head x n_model
+        # DIMS: n_head*d_head x d_model
         attn_out = self.o_net(attn_vec)
         attn_out = self.dropout(attn_out)
 
@@ -512,20 +522,20 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
         if mems is not None:
             cat = torch.cat([mems, w], 0)
             if self.pre_lnorm:
-                # DIMS: n_model x 3*n_head*d_head
+                # DIMS: d_model x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(cat))
             else:
-                # DIMS: n_model x 3*n_head*d_head
+                # DIMS: d_model x 3*n_head*d_head
                 w_heads = self.qkv_net(cat)
             w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
 
             w_head_q = w_head_q[-qlen:]
         else:
             if self.pre_lnorm:
-                # DIMS: n_model x 3*n_head*d_head
+                # DIMS: d_model x 3*n_head*d_head
                 w_heads = self.qkv_net(self.layer_norm(w))
             else:
-                # DIMS: n_model x 3*n_head*d_head
+                # DIMS: d_model x 3*n_head*d_head
                 w_heads = self.qkv_net(w)
 
             w_head_q, w_head_k, w_head_v = torch.chunk(w_heads, 3, dim=-1)
@@ -589,7 +599,7 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
         )
 
         # linear projection
-        # DIMS: n_head*d_head x n_model
+        # DIMS: n_head*d_head x d_model
         attn_out = self.o_net(attn_vec)
         attn_out = self.dropout(attn_out)
 
@@ -604,18 +614,21 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
 
 
 class DecoderLayer(LightningModule):
-    def __init__(self, n_head, n_model, d_head, d_inner, dropout, debug=False,
+    def __init__(self, d_input, d_output, n_head, d_head,
+                 d_inner, dropout,
                  **kwargs):
         super(DecoderLayer, self).__init__()
 
-        self.debug = debug
+        self.debug = kwargs.get("debug")
+        self.pre_lnorm = kwargs.get("pre_lnorm")
 
-        self.dec_attn = MultiHeadAttn(n_head, n_model, d_head, dropout,
+        self.dec_attn = MultiHeadAttn(n_head, d_model, d_head, dropout,
                                       **kwargs)
-        self.pos_ff = PositionwiseFF(
-            n_model, d_inner, dropout,
-            pre_lnorm=kwargs.get("pre_lnorm", debug=debug)
-        )
+        self.pos_ff = PositionwiseFF(n_layer, layer_idx, d_model, d_hidden,
+                                     d_inner, dropout,
+                                     pre_lnorm=self.pre_lnorm,
+                                     debug=self.debug
+                                     )
 
     def forward(self, dec_inp, dec_attn_mask=None, mems=None):
         output = self.dec_attn(dec_inp, attn_mask=dec_attn_mask, mems=mems)
@@ -656,14 +669,14 @@ class RelPartialLearnableDecoderLayer(LightningModule):
 
         self.debug = debug
 
-        # DIMS: n_model x n_head*d_head
+        # DIMS: d_model x n_head*d_head
         self.dec_attn = RelPartialLearnableMultiHeadAttn(n_head, n_model,
                                                          d_head, dropout,
                                                          n_predict, n_ext_ctx,
                                                          n_mems, dropatt,
                                                          pre_lnorm, debug=False)
 
-        # DIMS: n_model x n_model
+        # DIMS: d_model x d_model
         self.pos_ff = PositionwiseFF(
             n_model, d_inner, dropout, debug=kwargs['debug'],
             pre_lnorm=kwargs.get("pre_lnorm")
@@ -671,7 +684,7 @@ class RelPartialLearnableDecoderLayer(LightningModule):
 
     def forward(self, dec_inp, r, r_w_bias, r_r_bias, dec_attn_mask=None,
                 mems=None):
-        # DIMS: r -> n_predict x 1 x (n_model + 1)
+        # DIMS: r -> n_predict x 1 x (d_model + 1)
         # DIMS: r_w_bias -> n_head x d_head
         # DIMS: r_r_bias -> n_head x d_head
         # DIMS: output ->
@@ -724,8 +737,8 @@ class Embedding(LightningModule):
 
 class TransformerXL(LightningModule):
     def __init__(self, d_model: int, n_model: int, n_head: int, d_head: int,
-                 d_inner: int, n_layer: int, dropout: object, dropatt: object,
-                 d_pos_embed: object = None, pre_lnorm: bool = False,
+                 d_FF_inner: int, n_layer: int, dropout: object, dropatt: object,
+                 d_pos_enc: object = None, pre_lnorm: bool = False,
                  n_predict: object = None, n_ext_ctx: object = None,
                  n_mems: Optional[int] = None, adapt_inp: object = False,
                  same_length: object = False,
@@ -736,11 +749,11 @@ class TransformerXL(LightningModule):
         :param n_model: the number of dates that the transformer_model takes (length of the transformer_model)
         :param n_head: number of attention heads for each attention layer in the Transformer encoder
         :param d_head: dimensionality of the transformer_model's heads
-        :param d_inner:
+        :param d_FF_inner:
         :param n_layer: number of layers
         :param dropout:
         :param dropatt:
-        :param d_pos_embed: dimensionality of the positional embeddings
+        :param d_pos_enc: dimensionality of the positional embeddings
         :param pre_lnorm:
         :param n_predict: number of tokens to predict
         :param n_ext_ctx:
@@ -755,14 +768,14 @@ class TransformerXL(LightningModule):
 
         self.d_model = d_model
 
-        self.d_pos_embed = n_model if d_pos_embed is None else d_pos_embed
+        self.d_pos_embed = n_model if d_pos_enc is None else d_pos_enc
         self.n_model = n_model
         self.n_head = n_head
         self.d_head = d_head
 
         # TODO: Remove word embeddings
         # self.embedding = Embedding(
-        #     d_model, d_pos_embed, n_model, debug=debug
+        #     d_model, d_pos_embed, d_model, debug=debug
         # )
 
         self.drop = nn.Dropout(dropout)
@@ -784,7 +797,7 @@ class TransformerXL(LightningModule):
                     n_head,
                     n_model,
                     d_head,
-                    d_inner,
+                    d_FF_inner,
                     dropout,
                     n_predict=n_predict,
                     n_ext_ctx=n_ext_ctx,
@@ -795,25 +808,23 @@ class TransformerXL(LightningModule):
                 )
             )
 
-        self.crit = ProjectedSigmoid(d_model, d_pos_embed, n_model)
+        self.crit = ProjectedSigmoid(d_model, d_pos_enc, n_model)
 
         self.same_length = same_length
         self.n_clamp_after = n_clamp_after
         self.training_steps = 0
         self.compute = 0
 
-        self._create_params()
-
-    def _create_params(self):
         # default attention
         # DIMS: ceiling(d_pos_embed / 2)
         self.pos_emb = PositionalEmbedding(self.d_pos_embed, debug=self.debug)
 
-        # DIMS: n_head x n_head
-        self.r_w_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
+        # DIMS: n_head x d_head
+        self.r_w_bias = nn.Parameter(torch.zeros(self.n_head, self.d_head, dtype=torch.float))
 
-        # DIMS: n_head x n_head
-        self.r_r_bias = nn.Parameter(torch.Tensor(self.n_head, self.d_head))
+        # DIMS: n_head x d_head
+        self.r_r_bias = nn.Parameter(torch.zeros(self.n_head, self.d_head, dtype=torch.float))
+
 
     def reset_length(self, n_predict, n_ext_ctx, n_mems):
         self.n_predict = n_predict
@@ -911,7 +922,7 @@ class TransformerXL(LightningModule):
         hids = []
 
         # Default
-        # DIMS: n_model -> n_predict
+        # DIMS: d_model -> n_predict
         pos_seq = torch.arange(klen - 1, -1, -1.0)
         if self.n_clamp_after > 0:
             pos_seq.clamp_(max=self.n_clamp_after)
@@ -924,9 +935,9 @@ class TransformerXL(LightningModule):
         for i, layer in enumerate(self.layers):
             mems_i = None if mems is None else mems[i]
             core_out = layer(
-                # DIMS: n_predict x 1 x n_model
+                # DIMS: n_predict x 1 x d_model
                 core_out,
-                # DIMS: n_predict x 1 x (n_model+1)
+                # DIMS: n_predict x 1 x (d_model+1)
                 pos_emb,
                 # DIMS: n_head x n_head
                 self.r_w_bias,
@@ -981,9 +992,9 @@ if __name__ == "__main__":
     parser.add_argument("--n_rel_layer", type=int, default=4, help="")
     parser.add_argument("--n_head", type=int, default=2, help="")
     parser.add_argument("--d_head", type=int, default=2, help="")
-    parser.add_argument("--n_model", type=int, default=200, help="")
+    parser.add_argument("--d_model", type=int, default=200, help="")
     parser.add_argument("--d_pos_embed", type=int, default=200, help="")
-    parser.add_argument("--d_inner", type=int, default=200, help="")
+    parser.add_argument("--d_output", type=int, default=200, help="")
     parser.add_argument("--dropout", type=float, default=0.0, help="")
     parser.add_argument("--cuda", action="store_true", help="")
     parser.add_argument("--seed", type=int, default=1111, help="")
@@ -1006,7 +1017,7 @@ if __name__ == "__main__":
         model = TransformerXL(args.d_model, args.n_model, args.n_head,
                               args.d_head, args.d_inner, args.n_layer,
                               args.dropout, dropatt=args.dropout,
-                              d_pos_embed=d_pos_embed, pre_lnorm=True,
+                              d_pos_enc=d_pos_embed, pre_lnorm=True,
                               n_predict=n_predict,
                               n_ext_ctx=n_ext_ctx, n_mems=n_mems).to(device)
 
@@ -1017,3 +1028,5 @@ if __name__ == "__main__":
             print("batch {}".format(idx))
             out = model(inp, tgt, *mems)
             mems = out[1:]
+
+

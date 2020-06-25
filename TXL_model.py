@@ -19,7 +19,7 @@ from torch.utils.data import Dataset
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-from TransformerXL_modules import TransformerXL
+from TXL_modules import Transformer_XL
 
 from utils.exp_utils import create_exp_dir, logging
 from utils.initialization import weights_init
@@ -241,16 +241,17 @@ class TransformerXL_Trainer(pl.LightningModule):
 
         self.global_state = global_state
 
-        self.transformer_model = TransformerXL(
-            d_model=global_state.d_model,
-            n_model=global_state.n_model,
+        self.transformer_model = Transformer_XL(
+            n_layer=global_state.n_layer,
+            d_hidden=global_state.d_hidden,
+            d_pos_enc=global_state.d_pos_enc,
             n_head=global_state.n_head,
             d_head=global_state.d_head,
             d_FF_inner=global_state.d_FF_inner,
+            d_model=global_state.d_model,
+            n_model=global_state.n_model,
             dropout=global_state.dropout,
             dropatt=global_state.dropatt,
-            n_layer=global_state.n_layer,
-            d_pos_enc=global_state.d_pos_enc,
             pre_lnorm=global_state.pre_lnorm,
             n_predict=global_state.n_predict,
             n_ext_ctx=global_state.n_ext_ctx,

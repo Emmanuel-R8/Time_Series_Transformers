@@ -23,9 +23,9 @@ parser.add_argument("--d_head", type=int, default=50, help="head dimension")
 parser.add_argument("--d_pos_embed", type=int, default=-1,
                     help="embedding dimension")
 parser.add_argument(
-    "--n_model", type=int, default=500, help="transformer_model dimension. Must be even."
+    "--d_model", type=int, default=500, help="transformer_model dimension. Must be even."
 )
-parser.add_argument("--d_inner", type=int, default=1000,
+parser.add_argument("--d_output", type=int, default=1000,
                     help="inner dimension in FF")
 # parser.add_argument(
 #     "--time_unit", type=str, default='month',
