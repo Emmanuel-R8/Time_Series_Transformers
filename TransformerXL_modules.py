@@ -137,7 +137,7 @@ class MultiHeadAttn(LightningModule):
         # DIMS: n_model x 2*n_head*d_head
         self.kv_net = nn.Linear(n_model, 2 * n_head * d_head, bias=False)
 
-        self.drop = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
 
         # DIMS: n_head*d_head x n_model
@@ -197,7 +197,7 @@ class MultiHeadAttn(LightningModule):
         # linear projection
         # DIMS: n_head*d_head x n_model
         attn_out = self.o_net(attn_vec)
-        attn_out = self.drop(attn_out)
+        attn_out = self.dropout(attn_out)
 
         if self.pre_lnorm:
             # residual connection
@@ -215,7 +215,7 @@ class RelMultiHeadAttn(LightningModule):
             n_head,
             n_model,
             d_head,
-            dropout,
+            dropout=0.0,
             dropatt=0.0,
             n_predict=1,
             n_ext_ctx=None,
@@ -236,7 +236,7 @@ class RelMultiHeadAttn(LightningModule):
         self.qkv_net = nn.Linear(n_model, 3 * n_head * d_head, bias=False)
 
         # DIMS:
-        self.drop = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
 
         # DIMS: n_head*d_head x n_model
@@ -484,7 +484,7 @@ class RelPartialLearnableMultiHeadAttn(RelMultiHeadAttn):
         # linear projection
         # DIMS: n_head*d_head x n_model
         attn_out = self.o_net(attn_vec)
-        attn_out = self.drop(attn_out)
+        attn_out = self.dropout(attn_out)
 
         if self.pre_lnorm:
             # residual connection
@@ -591,7 +591,7 @@ class RelLearnableMultiHeadAttn(RelMultiHeadAttn):
         # linear projection
         # DIMS: n_head*d_head x n_model
         attn_out = self.o_net(attn_vec)
-        attn_out = self.drop(attn_out)
+        attn_out = self.dropout(attn_out)
 
         if self.pre_lnorm:
             # residual connection
