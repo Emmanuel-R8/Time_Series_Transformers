@@ -19,6 +19,7 @@ data_set = torch.tensor(data_set)
 
 # %%
 global_state = GlobalState(data=data_set, debug=True)
+global_state.skip_debug = ['MultiHeadAttention', 'IterableTimeSeries']
 
 # %%
 # Create a new transformer_model to be trained
@@ -28,7 +29,7 @@ transformerxl_model = TransformerXL_Trainer(global_state)
 # Logging backend
 TB_logger = TestTubeLogger(
     save_dir=os.path.join(os.getcwd(), global_state.work_dir, data_set_name),
-    name='transformerxl_trainer_logs'
+    name='test_tube_log'
 )
 
 # %%

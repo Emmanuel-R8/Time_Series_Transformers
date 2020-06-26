@@ -19,6 +19,8 @@ data_set = torch.tensor(data_set)
 
 # %%
 global_state = GlobalState(data=data_set, debug=True)
+global_state.num_workers = 0
+
 
 # %%
 # Create a new transformer_model to be trained

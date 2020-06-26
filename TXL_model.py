@@ -54,14 +54,16 @@ class IterableTimeSeries(Dataset):
         self.global_state = global_state
         self.data_type = mode
 
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
                     f" Creating dataloader for data set: {mode}")
 
         # In debug mode, only use about 2 epoch of input
         # TODO refactor to use exactly 2 epoch instead of 700 dates.
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             total_data_set_length = min(700, data.size(0))
         else:
             total_data_set_length = data.size(0)
@@ -69,27 +71,36 @@ class IterableTimeSeries(Dataset):
         # The beginning of the data set is where 'train' starts
         # The end of the dataset is here we find the last testing data
         # We therefore start at 0
-        # And end at total_data_set_length = n_samples + n_val + n_test
-        n_samples = total_data_set_length - global_state.n_val \
-                    - global_state.n_test - 1
+        # And end at total_data_set_length = n_samples + (n_model+1) + n_val + n_test
+        # (a sample is n_model vectors for X and 1 vector for Y)
+        # Final -1 is to reflect Python's 0-array convention
+        self.n_samples = total_data_set_length - \
+                         (global_state.n_model + 1) - \
+                         global_state.n_val - \
+                         global_state.n_test - \
+                         1
 
         # Adjust the start of the dataset for training / val / test
         if mode == "train":
             start_index = 0
-            end_index = n_samples
+            end_index = (global_state.n_model + 1) + self.n_samples
 
         elif mode == "val":
-            start_index = n_samples
-            end_index = n_samples + global_state.n_val
+            start_index = self.n_samples
+            end_index = (global_state.n_model + 1) + self.n_samples + \
+                        global_state.n_val
 
         elif mode == "test":
-            start_index = n_samples + global_state.n_val
-            end_index = n_samples + global_state.n_val + global_state.n_test
+            start_index = self.n_samples + global_state.n_val
+            end_index = (global_state.n_model + 1) + self.n_samples + \
+                        global_state.n_val + \
+                        global_state.n_test
 
         # This is the actual input on which to iterate
         self.data = data[start_index:end_index, :]
 
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
                     f" Dataset {self.data_type} - Start index: {start_index}")
@@ -101,7 +112,12 @@ class IterableTimeSeries(Dataset):
                     f" Dataset {self.data_type} - data: {self.data.size()}")
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
-                    f" Dataset {self.data_type} - data set iterator length: {self.data.size()[0]}")
+                    f" Dataset {self.data_type} - data set iterator"
+                    f" length: {self.data.size()[0]}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" Dataset {self.data_type} - calculated"
+                    f" n_samples: {self.n_samples}")
 
         # d_series is the depth of a series (how many input points per dates)
         # n_series is the number of series (how many dates)
@@ -111,10 +127,17 @@ class IterableTimeSeries(Dataset):
         # An item is a tuple of:
         #   - a transformer_model input being, say, 60 dates of time series
         #   -  the following date as expected output
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
-                    f" getting item from {self.data_type} no.: {index}")
+                    f" {self.data_type} \t item  no.: {index}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f"       x: from {index} to {index + self.global_state.n_model}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f"       y: at {index + self.global_state.n_model}")
 
         return (self.data[index: index + self.global_state.n_model, :],
                 self.data[index + self.global_state.n_model, :])
@@ -123,11 +146,14 @@ class IterableTimeSeries(Dataset):
         """
         Total number of samples in the dataset
         """
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
-                    f" Call to __len__() on {self.data_type} returning self.data.size()[0] = {self.data.size()[0]}")
-        return self.data.size()[0]
+                    f" Call to __len__() on {self.data_type} returning"
+                    f" self.data.size()[0] - (self.global_state.n_model + 1) ="
+                    f" {self.data.size()[0] - (self.global_state.n_model + 1)}")
+        return self.data.size()[0] - (self.global_state.n_model + 1)
 
 
 ################################################################################
@@ -140,16 +166,22 @@ class TransformerXL_Trainer(pl.LightningModule):
 
         self.global_state = global_state
 
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"")
             logging(f"")
-            logging(f"########################################################")
-            logging(f"########################################################")
+            logging(f"########################################################"
+                    f"########################################################")
+            logging(f"########################################################"
+                    f"########################################################")
             logging(f"")
             logging(f"    INITIALISING TRANSFORMER XL")
             logging(f"")
-            logging(f"########################################################")
-            logging(f"########################################################")
+            logging(f"########################################################"
+                    f"########################################################")
+            logging(f"########################################################"
+                    f"########################################################")
+            logging(f"")
 
         self.transformer_model = Transformer_XL(
             n_layer=global_state.n_layer,
@@ -176,7 +208,8 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     def forward(self, input: torch.FloatTensor, output: torch.FloatTensor,
                 *mems):
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"")
             logging(f"")
             logging(f"########################################################")
@@ -342,7 +375,8 @@ class TransformerXL_Trainer(pl.LightningModule):
     ############################################################################
 
     def train_dataloader(self):
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
                     f" Creating dataloader train")
@@ -358,7 +392,8 @@ class TransformerXL_Trainer(pl.LightningModule):
             batch_size=self.global_state.n_batch,
             num_workers=self.global_state.num_workers, drop_last=True
         )
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
                     f" Dataloader length: {len(dataloader)}")
@@ -367,24 +402,23 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     def training_step(self, batch: List[torch.Tensor], batch_idx: int,
                       optimizer_idx: int = 1):
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
-            logging(f"{self.__class__.__name__}, "
-                    f"{inspect.currentframe().f_code.co_name}: "
-                    f" batch: {type(batch)}")
-            logging(f"{self.__class__.__name__}, "
-                    f"{inspect.currentframe().f_code.co_name}: "
-                    f" batch_nb: {batch_idx}")
-            logging(f"{self.__class__.__name__}, "
-                    f"{inspect.currentframe().f_code.co_name}: "
-                    f" optimizer_idx: {type(optimizer_idx)}")
-
         # DIMS: batch = (x, y)
         # DIMS: x -> (n_batch, n_model, d_model)
         # DIMS: y -> (n_batch, d_model)
         x, y = batch
 
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" x = batch[0]: {batch[0].size()}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" y = batch[1]: {batch[1].size()}")
+
         y_hat = self.forward(x, y)
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
                     f" y_hat['loss']: {y_hat['loss'].size()}")
@@ -396,7 +430,8 @@ class TransformerXL_Trainer(pl.LightningModule):
                     f" y_hat['memory'][0]: {y_hat['memory'][0].size()}")
 
         loss = self.loss_function(y_hat['layer_out'][:, -1, :], y)
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
                     f" loss: {loss.size()}")
@@ -411,7 +446,8 @@ class TransformerXL_Trainer(pl.LightningModule):
     ############################################################################
 
     def val_dataloader(self):
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
                     f" Creating dataloader val")
@@ -428,7 +464,8 @@ class TransformerXL_Trainer(pl.LightningModule):
             batch_size=1,
             num_workers=self.global_state.num_workers, drop_last=True
         )
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
                     f" Dataloader length: {len(dataloader)}")
@@ -436,9 +473,40 @@ class TransformerXL_Trainer(pl.LightningModule):
         return dataloader
 
     def validation_step(self, batch, batch_nb):
+        # DIMS: batch = (x, y)
+        # DIMS: x -> (n_batch, n_model, d_model)
+        # DIMS: y -> (n_batch, d_model)
         x, y = batch
-        y_hat = self.forward(x, y, self.transformer_model.mems)
-        val_loss = self.loss_function(y_hat, y)
+
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" x = batch[0]: {batch[0].size()}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" y = batch[1]: {batch[1].size()}")
+
+        y_hat = self.forward(x, y)
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" y_hat['loss']: {y_hat['loss'].size()}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" y_hat['layer_out']: {y_hat['layer_out'].size()}")
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" y_hat['memory'][0]: {y_hat['memory'][0].size()}")
+
+        val_loss = self.loss_function(y_hat['layer_out'][:, -1, :], y)
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
+            logging(f"{self.__class__.__name__}, "
+                    f"{inspect.currentframe().f_code.co_name}: "
+                    f" loss: {val_loss.size()}")
+
         val_loss = val_loss.unsqueeze(dim=-1)
         return {"val_loss": val_loss}
 
@@ -458,7 +526,8 @@ class TransformerXL_Trainer(pl.LightningModule):
     ############################################################################
 
     def test_dataloader(self):
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
                     f" Creating dataloader train")
@@ -475,7 +544,8 @@ class TransformerXL_Trainer(pl.LightningModule):
             batch_size=1,
             num_workers=self.global_state.num_workers, drop_last=True
         )
-        if self.global_state.debug and (self.__class__.__name__ not in self.global_state.skip_debug):
+        if self.global_state.debug and (
+                self.__class__.__name__ not in self.global_state.skip_debug):
             logging(f"{self.__class__.__name__}, "
                     f"{inspect.currentframe().f_code.co_name}: "
                     f" Dataloader length: {len(dataloader)}")

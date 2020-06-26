@@ -90,10 +90,14 @@ class GlobalState:
         self.data_dir = "./data/etf"
         self.data_pickle = "allData.pickle"
 
+        # experiment directory
+        self.work_dir = "./experiments"
+
+
         # Debug
         self.debug = debug
         # If debug is on, do not debug those functions
-        self.skip_debug = ['MultiHeadAttention']
+        self.skip_debug = ['']
 
         # dimensionality of the transformer_model's hidden states'
         # depth of the transformer_model = no. of series = n_series
@@ -191,9 +195,6 @@ class GlobalState:
 
         # evaluation interval
         self.eval_interval = 20 if debug == True else 200
-
-        # experiment directory
-        self.work_dir = "../experiments"
 
         # Restart
         self.restart_dir = ""

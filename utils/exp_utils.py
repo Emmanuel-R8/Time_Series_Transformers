@@ -4,10 +4,10 @@ import os, shutil
 import torch
 
 
-def logging(s, log_path = "experiments/current.log", print_=False, log_=True):
-    if print_:
+def logging(s, log_path = "experiments/current.log", echo=False, save=True):
+    if echo:
         print(s)
-    if log_:
+    if save:
         with open(log_path, "a+") as f_log:
             f_log.write(s + "\n")
 
