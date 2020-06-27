@@ -18,8 +18,23 @@ data_set = data_set.fillna(0.0).values[:, 1:].astype(np.float64)
 data_set = torch.tensor(data_set)
 
 # %%
-global_state = GlobalState(data=data_set, debug=True)
-global_state.num_workers = 0
+global_state = GlobalState(data=data_set, debug=False)
+global_state.num_workers = 4
+global_state.dataset_size = 1_500
+global_state.n_layer = 3
+global_state.n_head = 4
+global_state.d_head = 8
+global_state.n_model = 20
+global_state.d_pos_enc = 20
+global_state.d_FF_inner = 50
+global_state.n_val=8
+global_state.n_test=16
+global_state.n_batch=32
+global_state.dropout=0.2
+global_state.dropout_attn=0.2
+global_state.n_predict=8
+global_state.n_mems=16
+
 
 
 # %%

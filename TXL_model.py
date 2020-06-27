@@ -64,7 +64,7 @@ class IterableTimeSeries(Dataset):
         # TODO refactor to use exactly 2 epoch instead of 700 dates.
         if self.global_state.debug and (
                 self.__class__.__name__ not in self.global_state.skip_debug):
-            total_data_set_length = min(700, data.size(0))
+            total_data_set_length = min(global_state.dataset_size, data.size(0))
         else:
             total_data_set_length = data.size(0)
 

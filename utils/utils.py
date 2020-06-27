@@ -89,6 +89,7 @@ class GlobalState:
     def __init__(self, data, debug=False):
         self.data_dir = "./data/etf"
         self.data_pickle = "allData.pickle"
+        self.dataset_size = 1_500 if debug == True else 1_000_000_000
 
         # experiment directory
         self.work_dir = "./experiments"
@@ -104,14 +105,14 @@ class GlobalState:
         self.d_model = data.shape[1]
 
         self.adapt_inp = False
-        self.n_layer = 3 if debug == True else 4
+        self.n_layer = 3 if debug == True else 8
 
         # number of attention heads for each attention layer in the Transformer
         # encoder
-        self.n_head = 5 if debug == True else 8
+        self.n_head = 4 if debug == True else 16
 
         # dimensionality of the transformer_model's heads
-        self.d_head = 7 if debug == True else 16
+        self.d_head = 8 if debug == True else 32
 
         # dimensionality of the hidden states
         self.d_hidden = self.d_model
@@ -184,13 +185,6 @@ class GlobalState:
         self.max_step = 4 if debug == True else 512
         self.max_eval_steps = -1
 
-        # use CUDA
-        self.cuda = False
-        self.multi_gpu = False
-        self.gpu0_bsz = -1
-
-        # choices: "O1", "O2", "O0"
-        self.fp16 = None
         self.log_interval = 10 if debug == True else 200
 
         # evaluation interval
@@ -206,11 +200,11 @@ class GlobalState:
         self.log_first_epochs = 0
         self.reset_lr = True
 
-        # help="reset learning schedule to start"
+        # TODO reset learning schedule to start
         self.expand = None
 
-        # help="Add layers to transformer_model throughout training
-        # choices=["repeat", "reinit", "repeat_bottom", "reinit_bottom", "duplicate"],
+        # TODO Add layers to transformer_model throughout training
+        # choices: "repeat", "reinit", "repeat_bottom", "reinit_bottom", "duplicate"
         self.integration = ""
 
         # choices=["freeze", "reverse_distil_full",
@@ -218,7 +212,8 @@ class GlobalState:
         self.integration_length = 0
         self.expansion_dict = {}
 
-        # choices=["reinit", "duplicate"]
+        # TODO Add layers to transformer_model throughout training
+        # choices: "reinit", "duplicate"
         self.widen = None
         self.widen_dict = {}
 
