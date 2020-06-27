@@ -16,7 +16,7 @@ from torch.utils.data import Dataset
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 
-from TXL_modules import Transformer_XL
+from modules import Transformer_XL
 
 from utils.exp_utils import logging
 from utils.utils import GlobalState

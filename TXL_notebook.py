@@ -15,7 +15,7 @@ import torch
 import pytorch_lightning as pl
 from pytorch_lightning.loggers import NeptuneLogger
 
-from TXL_model import TransformerXL_Trainer
+from model import TransformerXL_Trainer
 from utils.utils import GlobalState
 
 # %% Load input
