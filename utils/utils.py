@@ -3,6 +3,7 @@ import os
 import numpy as np
 import torch
 
+
 class OrderedIterator():
     def __init__(self, data: torch.LongTensor, d_batch: int = 10,
                  n_batch_per_test: int = 1,
@@ -87,18 +88,30 @@ def get_time_series(datadir, dataset):
 
 class GlobalState:
     def __init__(self, data, debug=False):
+
+        #######################################################
+        #
+        # Directories
+        #
         self.data_dir = "./data/etf"
         self.data_pickle = "allData.pickle"
         self.dataset_size = 1_500 if debug == True else 1_000_000_000
 
         # experiment directory
-        self.work_dir = "./experiments"
+        self.work_dir = "./experiments/logs"
 
-
-        # Debug
+        #######################################################
+        #
+        # Debugging
+        #
         self.debug = debug
         # If debug is on, do not debug those functions
         self.skip_debug = ['']
+
+        #######################################################
+        #
+        # Dimensions
+        #
 
         # dimensionality of the transformer_model's hidden states'
         # depth of the transformer_model = no. of series = n_series
@@ -162,6 +175,11 @@ class GlobalState:
         self.init_std = 0.02
         self.proj_init_std = 0.01
 
+        #######################################################
+        #
+        # Running parameters
+        #
+        self.max_epochs = 100 if debug == True else 1_000
         # Optimizer / Scheduler
         # Choices: adam, sgd, adagrad
         self.optim = "adam"

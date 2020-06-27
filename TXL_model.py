@@ -512,12 +512,12 @@ class TransformerXL_Trainer(pl.LightningModule):
 
     def validation_end(self, outputs):
         avg_loss = torch.stack([x["val_loss"] for x in outputs]).mean()
-        return {"avg_val_loss": avg_loss}
+        return {"val_loss": avg_loss}
 
-    # def validation_epoch_end(self, outputs):
-    #     avg_loss = torch.stack([input['val_loss'] for input in outputs]).mean()
-    #     tensorboard_logs = {'val_loss': avg_loss}
-    #     return {'val_loss': avg_loss, 'log': tensorboard_logs}
+    def validation_epoch_end(self, outputs):
+        avg_loss = torch.stack([output['val_loss'] for output in outputs]).mean()
+        tensorboard_logs = {'val_loss': avg_loss}
+        return {'val_loss': avg_loss, 'log': tensorboard_logs}
 
     ############################################################################
     #
@@ -556,12 +556,12 @@ class TransformerXL_Trainer(pl.LightningModule):
         x, y = batch
         logits = self(x)
         loss = F.nll_loss(logits, y)
-        return {"val_loss": loss}
+        return {"test_loss": loss}
 
-    # def test_epoch_end(self, outputs):
-    #     avg_loss = torch.stack([input['val_loss'] for input in outputs]).mean()
-    #     tensorboard_logs = {'val_loss': avg_loss}
-    #     return {'val_loss': avg_loss, 'log': tensorboard_logs}
+    def test_epoch_end(self, outputs):
+        avg_loss = torch.stack([output['test_loss'] for output in outputs]).mean()
+        tensorboard_logs = {'avg_test_loss': avg_loss}
+        return {'avg_test_loss': avg_loss, 'log': tensorboard_logs}
 
 
 ################################################################################
@@ -569,7 +569,7 @@ class TransformerXL_Trainer(pl.LightningModule):
 # Checkpoint callback to save best 3 models
 #
 checkpoint_callback = ModelCheckpoint(
-    filepath="./data/working/etf",
+    filepath="./experiments/checkpoints/etf",
     save_top_k=3,
     verbose=True,
     monitor="avg_val_loss",
