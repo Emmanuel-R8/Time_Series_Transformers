@@ -3,6 +3,8 @@ import os
 import numpy as np
 import torch
 
+import pytorch_lightning as pl
+from pytorch_lightning.profiler import PassThroughProfiler, SimpleProfiler, AdvancedProfiler
 
 class OrderedIterator():
     def __init__(self, data: torch.LongTensor, d_batch: int = 10,
@@ -93,7 +95,8 @@ class GlobalState:
         #
         # Directories
         #
-        self.data_dir = "./data/etf"
+        self.data_set = f"etf"
+        self.data_dir = f"./data/{self.data_set}"
         self.data_pickle = "allData.pickle"
         self.dataset_size = 1_500 if debug == True else 1_000_000_000
 
@@ -107,6 +110,13 @@ class GlobalState:
         self.debug = debug
         # If debug is on, do not debug those functions
         self.skip_debug = ['']
+
+        # Choices: pl.PassThroughProfiler():  no proofiling
+        #          pl.SimpleProfiler(): just time recording
+        #          pl.AdvancedProfiler(),...
+        # See pytorch_lightning.profiler
+        # Simple and Advanced profilers accept output_filename
+        self.profiler = PassThroughProfiler()
 
         #######################################################
         #
